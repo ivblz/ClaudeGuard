@@ -94,7 +94,7 @@ def main():
     except Exception:
         pass
 
-    sync_hosts_file(block_claude_domains=False, block_update_domains=config.block_auto_updates, config=config)
+    sync_hosts_file(block_claude_domains=False, config=config)
     run_real_claude(config)
 
 def monitor_and_enforce(config, proc, stop_event, block_info):
@@ -149,10 +149,6 @@ def run_real_claude(config):
         sys.exit(1)
 
     env = os.environ.copy()
-    if config.block_auto_updates:
-        env["DISABLE_AUTO_UPDATE"] = "1"
-        env["CLAUDE_DISABLE_AUTO_UPDATE"] = "1"
-
     if config.model_override_enabled and config.default_model and "--model" not in sys.argv:
         args = [real_path, "--model", config.default_model] + sys.argv[1:]
     else:

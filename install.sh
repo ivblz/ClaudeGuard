@@ -19,7 +19,8 @@ REPO="${CLAUDEGUARD_REPO:-ivblz/ClaudeGuard}"
 BRANCH="${CLAUDEGUARD_BRANCH:-main}"
 
 INSTALL_DIR="$HOME/.local/share/ClaudeGuard"
-APP_BUNDLE="$INSTALL_DIR/ClaudeGuard.app"
+APP_BUNDLE="/Applications/ClaudeGuard.app"
+BUILD_APP_BUNDLE="$INSTALL_DIR/ClaudeGuard.app"
 PLIST_PATH="$HOME/Library/LaunchAgents/com.claudeguard.daemon.plist"
 CONFIG_DIR="$HOME/.config/claudeguard"
 # Root privileged-helper: a LaunchDaemon (no sudoers, no setuid). The binary
@@ -120,7 +121,7 @@ chmod +x "$INSTALL_DIR/bin/claudeguard" "$INSTALL_DIR/bin/ClaudeGuardMenuBar" \
 
 # --- 3. Build the .app bundle (icon + Info.plist) ---------------------------
 info "Creating ClaudeGuard.app bundle…"
-mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+mkdir -p "$BUILD_APP_BUNDLE/Contents/MacOS" "$BUILD_APP_BUNDLE/Contents/Resources"
 
 if [ -f "$LOGO_PNG" ]; then
     ICONSET_DIR="/tmp/AppIcon.iconset"; rm -rf "$ICONSET_DIR"; mkdir -p "$ICONSET_DIR"
@@ -130,13 +131,13 @@ if [ -f "$LOGO_PNG" ]; then
         sz="${pair%%:*}"; nm="${pair#*:}"   # split without relying on word-splitting (bash+zsh safe)
         sips -z "$sz" "$sz" "$LOGO_PNG" --out "$ICONSET_DIR/$nm.png" >/dev/null 2>&1
     done
-    iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+    iconutil -c icns "$ICONSET_DIR" -o "$BUILD_APP_BUNDLE/Contents/Resources/AppIcon.icns"
     rm -rf "$ICONSET_DIR"
 else
     warn "assets/AppIcon.png not found — bundle will use the default icon."
 fi
 
-cat > "$APP_BUNDLE/Contents/Info.plist" <<'EOF'
+cat > "$BUILD_APP_BUNDLE/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -151,9 +152,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-cp "$INSTALL_DIR/bin/ClaudeGuardMenuBar" "$APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar"
-mkdir -p "$HOME/Applications"
-ln -sf "$APP_BUNDLE" "$HOME/Applications/ClaudeGuard.app"
+cp "$INSTALL_DIR/bin/ClaudeGuardMenuBar" "$BUILD_APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar"
 
 # --- 4. Symlink the manager CLI ---------------------------------------------
 info "Installing the 'claudeguard' manager…"
@@ -190,6 +189,48 @@ else
     warn "    claudeguard set-cli-path /path/to/real/claude"
 fi
 
+# Remove locks left by versions that supported freezing auto-updates.
+# Stop the old daemon first so it cannot reapply them during migration.
+pkill -f "ClaudeGuardMenuBar" 2>/dev/null || true
+launchctl unload "$PLIST_PATH" 2>/dev/null || true
+info "Removing legacy auto-update locks…"
+for target in "$HOME/Library/Caches/"com.anthropic.claude*.ShipIt \
+              "$HOME/Library/Application Support/Claude/app-update.yml"; do
+    [ -e "$target" ] || continue
+    chflags -R nouchg "$target"
+    if [ -d "$target" ]; then
+        chmod -R u+rwX "$target"
+    else
+        chmod u+rw "$target"
+    fi
+done
+python3 - "$CONFIG_DIR/config.json" <<'PYTHON'
+import json, os, sys
+path = sys.argv[1]
+with open(path) as f:
+    config = json.load(f)
+for key in ("block_auto_updates", "update_domains"):
+    config.pop(key, None)
+with open(path + ".migration", "w") as f:
+    json.dump(config, f, indent=2)
+os.replace(path + ".migration", path)
+PYTHON
+rm -f "$INSTALL_DIR/src/update_guard.py"
+
+# Install the native app in the shared Applications folder.
+info "Installing ${BOLD}$APP_BUNDLE${RST}…"
+sudo /usr/bin/ditto "$BUILD_APP_BUNDLE" "$APP_BUNDLE"
+sudo chown -R root:wheel "$APP_BUNDLE"
+# Remove only the legacy user-app symlink owned by this installer.
+if [ -L "$HOME/Applications/ClaudeGuard.app" ]; then
+    legacy_target="$(readlink "$HOME/Applications/ClaudeGuard.app")"
+    if [ "$legacy_target" = "$BUILD_APP_BUNDLE" ]; then
+        rm "$HOME/Applications/ClaudeGuard.app"
+    fi
+fi
+rm -rf "$BUILD_APP_BUNDLE"
+rm -f "$INSTALL_DIR/bin/ClaudeGuardMenuBar"
+
 # --- 6. LaunchAgent (autostart at login) ------------------------------------
 info "Registering login-autostart LaunchAgent…"
 mkdir -p "$HOME/Library/LaunchAgents"
@@ -200,7 +241,7 @@ cat > "$PLIST_PATH" <<EOF
 <dict>
     <key>Label</key><string>com.claudeguard.daemon</string>
     <key>ProgramArguments</key>
-    <array><string>$INSTALL_DIR/bin/ClaudeGuardMenuBar</string></array>
+    <array><string>$APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar</string></array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
     <key>StandardOutPath</key><string>/tmp/claudeguard.log</string>

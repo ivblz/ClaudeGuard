@@ -114,6 +114,14 @@ else
     echo "       Reinstall Claude Code (e.g. 'brew reinstall --cask claude-code') if 'claude' now points nowhere."
 fi
 
+# Remove the shared application and any legacy installer-created user link.
+sudo rm -rf "/Applications/ClaudeGuard.app"
+if [ -L "$HOME/Applications/ClaudeGuard.app" ]; then
+    if [ "$(readlink "$HOME/Applications/ClaudeGuard.app")" = "$INSTALL_DIR/ClaudeGuard.app" ]; then
+        rm "$HOME/Applications/ClaudeGuard.app"
+    fi
+fi
+
 # 6. Remove installed files and configs
 echo "--> Cleaning configuration and installation files..."
 rm -rf "$INSTALL_DIR"

@@ -4,3 +4,26 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+.ssh/
+
+# Local runtime state (may contain VPN IPs and machine-specific paths)
+/config.json
+/state.json
+/pending/
+*.log
+
+# Local build artifacts
+*.app/
+/bin/ClaudeGuardMenuBar
+/bin/hosts-helper

@@ -33,7 +33,6 @@ ClaudeGuard solves that: every launch and every running session is checked again
 - 🧠 **One brain, one verdict** - a background daemon publishes the decision to a state file; the CLI, the app launcher and the menu bar all read the same verdict, so nothing can disagree.
 - 🚀 **Autostart at login** via `LaunchAgent`.
 - 🟢 **Menu bar UI** - live status (🟢 protected / 🔴 blocked / ⚪ offline / 🟡 off), toggles, one-click whitelist.
-- ❄️ **Freeze auto-updates** - blocks Claude's update servers and locks the update dirs.
 - 🤖 **Default model override** - pin a model for every `claude` session (e.g. `claude-opus-4-8`) from the menu bar; the CLI wrapper injects `--model` automatically so you don't have to type it each time.
 
 ## Install
@@ -67,6 +66,8 @@ and offers to whitelist your current IP - accept **only if you are on your VPN r
 ./uninstall.sh
 ```
 
+The app is installed at `/Applications/ClaudeGuard.app`. Supporting Python files live in `~/.local/share/ClaudeGuard`, and settings in `~/.config/claudeguard`.
+
 ## CLI
 
 After install the `claudeguard` command is available:
@@ -78,7 +79,6 @@ After install the `claudeguard` command is available:
 | `claudeguard remove-ip <ip>` | Remove an IP from the whitelist |
 | `claudeguard list-ips` | List whitelisted IPs |
 | `claudeguard enable-protection` / `disable-protection` | Turn protection on / off |
-| `claudeguard block-updates` / `allow-updates` | Lock / unlock auto-updates |
 | `claudeguard set-model <model>` | Set the default model (e.g. `claude-opus-4-8`) |
 | `claudeguard enable-model` / `disable-model` | Turn the model override on / off |
 | `claudeguard launch-desktop` | Launch Claude Desktop with a pre-flight check |
@@ -116,7 +116,6 @@ src/
   ip_checker.py     Public-IP detection: STUN over UDP, then HTTP
   config.py         Config at ~/.config/claudeguard/config.json
   network_guard.py  /etc/hosts + pf firewall block/unblock
-  update_guard.py   Freeze/unfreeze Claude auto-updates
   integrity.py      Finds Claude's real paths; re-attaches hooks after a reinstall
   cli_wrapper.py    Pre-flight interceptor for the `claude` command
   app_launcher.py   Pre-flight interceptor for Claude.app

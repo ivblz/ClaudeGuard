@@ -33,7 +33,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var state: GuardState = .offline
     var currentIP: String = "…"
     var protectionEnabled: Bool = true
-    var blockAutoUpdates: Bool = true
     var modelOverrideEnabled: Bool = false
     var defaultModel: String = "claude-opus-4-8"
     var allowedIPs: [String] = []
@@ -58,7 +57,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Last enforcement pushed to the system, to skip redundant work. nil = never
     // applied, force a first apply.
     var lastAppliedDomainsBlocked: Bool? = nil
-    var lastAppliedBlockUpdates: Bool? = nil
     // Alerted once for the current blocked episode (reset on leaving blocked).
     var hasAlertedThisBlock: Bool = false
 
@@ -124,12 +122,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// update, another tool or a manual edit reverted our block.
     func hostsDrifted() -> Bool {
         guard let wantDomains = lastAppliedDomainsBlocked,
-              let wantUpdates = lastAppliedBlockUpdates,
               let content = try? String(contentsOfFile: "/etc/hosts", encoding: .utf8)
         else { return false }
         let hasDomains = content.contains("# BEGIN CLAUDEGUARD BLOCKS")
         let hasUpdates = content.contains("# BEGIN CLAUDEGUARD UPDATE BLOCKS")
-        return hasDomains != wantDomains || hasUpdates != wantUpdates
+        return hasDomains != wantDomains || hasUpdates
     }
 
     /// Claude Desktop, matched by bundle-id *prefix* — the exact id has already
@@ -328,24 +325,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // drift means "pretend we never applied anything" and re-apply.
         if hostsDrifted() {
             lastAppliedDomainsBlocked = nil
-            lastAppliedBlockUpdates = nil
         }
 
-        // Domains: /etc/hosts holds both claude-domain and update-domain blocks,
-        // so rewrite when either flips.
         let wantBlocked = new.domainsShouldBeBlocked
-        let domainsChanged = (lastAppliedDomainsBlocked != wantBlocked)
-        let updatesChanged = (lastAppliedBlockUpdates != blockAutoUpdates)
-
-        if domainsChanged || updatesChanged {
+        if lastAppliedDomainsBlocked != wantBlocked {
             lastAppliedDomainsBlocked = wantBlocked
-            runHelper("sync_hosts", wantBlocked ? "true" : "false", String(blockAutoUpdates))
-        }
-
-        // Auto-update lock (chmod/chflags) — only on change.
-        if updatesChanged {
-            lastAppliedBlockUpdates = blockAutoUpdates
-            runHelper("sync_updates", String(blockAutoUpdates), "")
+            runHelper("sync_hosts", wantBlocked ? "true" : "false", "")
         }
 
         // Desktop app kill + alert.
@@ -597,7 +582,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let ips = json["allowed_ips"] as? [String] { allowedIPs = ips }
         if let p = json["protection_enabled"] as? Bool { protectionEnabled = p }
-        if let u = json["block_auto_updates"] as? Bool { blockAutoUpdates = u }
         if let m = json["model_override_enabled"] as? Bool { modelOverrideEnabled = m }
         if let d = json["default_model"] as? String { defaultModel = d }
     }
@@ -608,7 +592,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { json = existing }
         json["allowed_ips"] = allowedIPs
         json["protection_enabled"] = protectionEnabled
-        json["block_auto_updates"] = blockAutoUpdates
         json["model_override_enabled"] = modelOverrideEnabled
         json["default_model"] = defaultModel
         if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
@@ -706,10 +689,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         prot.target = self
         menu.addItem(prot)
 
-        let upd = NSMenuItem(title: blockAutoUpdates ? "✓ Block Auto-Updates" : "Allow Auto-Updates", action: #selector(onToggleUpdates), keyEquivalent: "")
-        upd.target = self
-        menu.addItem(upd)
-
         menu.addItem(.separator())
 
         let modelToggle = NSMenuItem(title: modelOverrideEnabled ? "✓ Default Model: \(defaultModel)" : "Default Model Override (off)", action: #selector(onToggleModelOverride), keyEquivalent: "")
@@ -750,13 +729,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func onToggleProtection() {
         protectionEnabled.toggle()
-        saveConfig()
-        rebuildMenu()        // reflect the toggle instantly; enforcement follows
-        recheckAsync()
-    }
-
-    @objc func onToggleUpdates() {
-        blockAutoUpdates.toggle()
         saveConfig()
         rebuildMenu()        // reflect the toggle instantly; enforcement follows
         recheckAsync()

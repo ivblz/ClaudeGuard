@@ -8,7 +8,6 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_CONFIG = {
     "allowed_ips": [],
     "protection_enabled": True,
-    "block_auto_updates": True,
     "model_override_enabled": False,
     "default_model": "claude-opus-4-8",
     "check_interval": 10,
@@ -30,9 +29,6 @@ DEFAULT_CONFIG = {
         "auth.anthropic.com",
         "assets-proxy.anthropic.com",
         "cdn.anthropic.com"
-    ],
-    "update_domains": [
-        "desktop-app-updates.anthropic.com"
     ],
     "real_claude_cli_path": "/opt/homebrew/bin/claude",
     "real_claude_app_path": "/Applications/Claude.app"
@@ -98,15 +94,6 @@ class ConfigManager:
     @protection_enabled.setter
     def protection_enabled(self, val):
         self.config["protection_enabled"] = bool(val)
-        self.save_config()
-
-    @property
-    def block_auto_updates(self):
-        return self.config.get("block_auto_updates", True)
-
-    @block_auto_updates.setter
-    def block_auto_updates(self, val):
-        self.config["block_auto_updates"] = bool(val)
         self.save_config()
 
     @property

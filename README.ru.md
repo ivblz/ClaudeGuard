@@ -33,7 +33,6 @@ ClaudeGuard решает эту проблему: каждый запуск и �
 - 🧠 **Единый мозг, один вердикт** - фоновый демон публикует решение в state-файл; CLI, лаунчер и меню-бар читают один и тот же вердикт, поэтому компоненты не расходятся.
 - 🚀 **Автозапуск при входе** через `LaunchAgent`.
 - 🟢 **Меню-бар** - живой статус (🟢 защищено / 🔴 блок / ⚪ офлайн / 🟡 выкл), тумблеры, whitelist в один клик.
-- ❄️ **Заморозка автообновлений** - блокирует серверы обновлений и локает директории обновлений.
 - 🤖 **Модель по умолчанию** - закрепите модель для каждой сессии `claude` (например `claude-opus-4-8`) прямо из меню-бара; обёртка CLI автоматически подставляет `--model`, чтобы не вводить каждый раз руками.
 
 ## Установка
@@ -67,6 +66,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/i
 ./uninstall.sh
 ```
 
+Приложение устанавливается в `/Applications/ClaudeGuard.app`. Служебные Python-файлы находятся в `~/.local/share/ClaudeGuard`, настройки — в `~/.config/claudeguard`.
+
 ## CLI
 
 После установки доступна команда `claudeguard`:
@@ -78,7 +79,6 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/i
 | `claudeguard remove-ip <ip>` | Удалить IP из whitelist |
 | `claudeguard list-ips` | Показать whitelist |
 | `claudeguard enable-protection` / `disable-protection` | Включить / выключить защиту |
-| `claudeguard block-updates` / `allow-updates` | Заблокировать / разрешить автообновления |
 | `claudeguard set-model <model>` | Задать модель по умолчанию (например `claude-opus-4-8`) |
 | `claudeguard enable-model` / `disable-model` | Включить / выключить подмену модели |
 | `claudeguard launch-desktop` | Запустить Claude Desktop с pre-flight проверкой |
@@ -115,7 +115,6 @@ src/
   ip_checker.py     Детект внешнего IP: STUN по UDP, затем HTTP
   config.py         Конфиг в ~/.config/claudeguard/config.json
   network_guard.py  Блок/разблок через /etc/hosts + pf firewall
-  update_guard.py   Заморозка/разморозка автообновлений Claude
   integrity.py      Ищет реальные пути Claude; переподключает перехваты после переустановки
   cli_wrapper.py    Pre-flight перехватчик команды `claude`
   app_launcher.py   Pre-flight перехватчик Claude.app

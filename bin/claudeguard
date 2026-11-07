@@ -12,11 +12,10 @@ from src.config import ConfigManager
 from src.brain import get_verdict, daemon_is_up, resolve_display_ip
 from src.integrity import cli_hook_status, repair, repair_cli
 from src.network_guard import sync_hosts_file
-from src.update_guard import apply_auto_update_lock
 
 def print_help():
     help_text = """
-ClaudeGuard CLI - VPN Whitelist & Auto-Update Control for Claude
+ClaudeGuard CLI - VPN Whitelist Protection for Claude
 
 Usage:
   claudeguard <command> [options]
@@ -29,8 +28,6 @@ Commands:
   list-ips             Show all whitelisted IPs
   enable-protection    Enable active network & pre-flight protection
   disable-protection   Disable protection (Traffic unblocked)
-  block-updates        Enable auto-update locking (Desktop & CLI)
-  allow-updates        Disable auto-update locking
   set-model <model>    Set the default model (e.g. claude-opus-4-8)
   enable-model         Enable model override for every claude session
   disable-model        Disable model override
@@ -55,7 +52,6 @@ def main():
     if cmd == "status":
         print("=== ClaudeGuard Status ===")
         print(f"Protection Enabled : {config.protection_enabled}")
-        print(f"Block Auto-Updates : {config.block_auto_updates}")
         if config.model_override_enabled:
             print(f"Default Model      : {config.default_model}")
         else:
@@ -115,18 +111,8 @@ def main():
 
     elif cmd == "disable-protection":
         config.protection_enabled = False
-        sync_hosts_file(block_claude_domains=False, block_update_domains=config.block_auto_updates, config=config)
+        sync_hosts_file(block_claude_domains=False, config=config)
         print("🟡 Protection DISABLED.")
-
-    elif cmd == "block-updates":
-        config.block_auto_updates = True
-        apply_auto_update_lock(True)
-        print("✅ Auto-updates BLOCKED.")
-
-    elif cmd == "allow-updates":
-        config.block_auto_updates = False
-        apply_auto_update_lock(False)
-        print("🟢 Auto-updates ALLOWED.")
 
     elif cmd == "set-model":
         if len(sys.argv) < 3:
@@ -152,7 +138,7 @@ def main():
 
     elif cmd in ("start", "launch", "open"):
         plist = os.path.expanduser("~/Library/LaunchAgents/com.claudeguard.daemon.plist")
-        app_path = os.path.expanduser("~/.local/share/ClaudeGuard/bin/ClaudeGuardMenuBar")
+        app_path = "/Applications/ClaudeGuard.app/Contents/MacOS/ClaudeGuardMenuBar"
         subprocess.run(["launchctl", "load", plist], capture_output=True)
         if not os.system("pgrep -f ClaudeGuardMenuBar >/dev/null") == 0:
             subprocess.Popen([app_path])

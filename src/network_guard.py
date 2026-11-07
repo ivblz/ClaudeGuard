@@ -10,6 +10,7 @@ HOSTS_PATH = "/etc/hosts"
 BLOCK_HEADER = "# BEGIN CLAUDEGUARD BLOCKS\n"
 BLOCK_FOOTER = "# END CLAUDEGUARD BLOCKS\n"
 
+# Legacy markers are retained only to remove blocks from older installations.
 UPDATE_HEADER = "# BEGIN CLAUDEGUARD UPDATE BLOCKS\n"
 UPDATE_FOOTER = "# END CLAUDEGUARD UPDATE BLOCKS\n"
 
@@ -157,7 +158,7 @@ def generate_all_subdomains():
                 domains.add(f"{sub}.{apex}")
     return sorted(list(domains))
 
-def sync_hosts_file(block_claude_domains, block_update_domains, config):
+def sync_hosts_file(block_claude_domains, config):
     """Block/unblock all Claude & Anthropic subdomains via /etc/hosts and pf
     (TCP + UDP QUIC)."""
     try:
@@ -180,14 +181,6 @@ def sync_hosts_file(block_claude_domains, block_update_domains, config):
                 new_blocks += f"127.0.0.1\t{domain}\n"
                 new_blocks += f"::1\t{domain}\n"
             new_blocks += BLOCK_FOOTER
-
-        if block_update_domains:
-            new_blocks += UPDATE_HEADER
-            for domain in config.config.get("update_domains", []):
-                new_blocks += f"0.0.0.0\t{domain}\n"
-                new_blocks += f"127.0.0.1\t{domain}\n"
-                new_blocks += f"::1\t{domain}\n"
-            new_blocks += UPDATE_FOOTER
 
         final_content = content.rstrip() + "\n\n" + new_blocks if new_blocks else content.rstrip() + "\n"
 

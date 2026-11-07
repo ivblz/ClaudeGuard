@@ -43,7 +43,7 @@ def launch_claude_desktop():
         sys.exit(1)
 
     # IP is valid! Unblock domain and start app
-    sync_hosts_file(block_claude_domains=False, block_update_domains=config.block_auto_updates, config=config)
+    sync_hosts_file(block_claude_domains=False, config=config)
     open_real_app(config)
 
 def open_real_app(config):

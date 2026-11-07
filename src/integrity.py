@@ -163,14 +163,6 @@ def discover_desktop_app(config=None):
     return None
 
 
-def desktop_update_paths():
-    """Claude Desktop's auto-update state. Globbed, not keyed on a literal bundle
-    id — a stale one matches nothing and turns the freeze into a silent no-op."""
-    paths = glob.glob(os.path.join(HOME, "Library", "Caches", "com.anthropic.claude*.ShipIt"))
-    paths += glob.glob(os.path.join(HOME, "Library", "Application Support", "Claude", "app-update.yml"))
-    return paths
-
-
 # --- repair -----------------------------------------------------------------
 
 def _relink(wrapper, link):
