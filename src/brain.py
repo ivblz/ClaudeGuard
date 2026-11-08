@@ -53,6 +53,9 @@ def get_verdict(config, timeout=2.0, allow_fallback=True):
 
     st = read_daemon_state()
     if st is not None:
+        if st.get("enforcement_error"):
+            verdict = "blocked" if st.get("state") == "blocked" else "offline"
+            return verdict, st.get("ip"), st["enforcement_error"]
         v = st.get("state", "offline")
         if v == "disabled":  # the daemon has its own vocabulary; normalise it
             return "allowed", st.get("ip"), None

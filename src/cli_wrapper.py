@@ -94,7 +94,11 @@ def main():
     except Exception:
         pass
 
-    sync_hosts_file(block_claude_domains=False, config=config)
+    ok, message = sync_hosts_file(block_claude_domains=False, config=config)
+    if not ok:
+        force_restore_terminal()
+        print_block_banner(ip, message, "NETWORK PROTECTION ERROR")
+        sys.exit(1)
     run_real_claude(config)
 
 def monitor_and_enforce(config, proc, stop_event, block_info):

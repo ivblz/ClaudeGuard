@@ -108,6 +108,35 @@ it immediately) at any time.
 
 > **Scope:** this is accidental-leak protection for your own machine, not a defense against a malicious admin. The truly unbypassable layer (a Network Extension content filter) requires a paid Apple Developer account; the on-device approach here is the free ceiling and covers accidental leaks well.
 
+### Coexisting with other PF users
+
+Rules and the address table live in the private `com.claudeguard` anchor.
+ClaudeGuard acquires its own PF enable token (`-E`) and releases only that token (`-X`)
+on unblock/uninstall. It never globally disables PF or flushes all connection states.
+Existing TCP/QUIC states are removed only for blocked destination IPs. Built-in domains
+are restricted to Anthropic's dedicated ranges; explicitly added custom domains may use
+shared IPs, so blocking those addresses affects all connections to them.
+
+Upgrade with `./install.sh`; updating user-side Python alone does not update the root-owned
+backend. The installer starts the user daemon only after installing the matching root helper.
+The native `pf-anchor` helper inserts/removes only ClaudeGuard's labelled root call,
+using ticket-checked single-rule operations. It also works when Internet Sharing replaces
+the default `com.apple/*` entry with its own anchors. No root ruleset reload is used.
+The exact legacy ClaudeGuard ruleset is migrated; ambiguous mixed legacy/foreign rules
+are rejected rather than rewritten. The private macOS PF ABI is checked by reading rules
+before mutation; an incompatible kernel produces an error without a global-reload fallback.
+
+The menu retains its original four IP/protection states. Enforcement errors are logged,
+retried and propagated to launch checks, without an extra menu state. Active blocks are
+refreshed every 60 seconds. Hosts blocking remains in place on PF failure. Logs:
+`/tmp/claudeguard.err` and `/tmp/claudeguard-helper.err`.
+
+Run isolated tests without touching the system firewall:
+`python3 -B -m unittest discover -s tests -v`.
+Native tests: `clang -Wall -Wextra -Werror tests/test_pf_anchor.c -o /tmp/test-pf-anchor && /tmp/test-pf-anchor`.
+`tests/live_pf_check.py` is a separate opt-in root test that temporarily blocks one Claude IP
+and verifies TCP recovery and preservation of Internet Sharing/NAT/reference state.
+
 ## Project structure
 
 ```
@@ -121,6 +150,8 @@ src/
   app_launcher.py   Pre-flight interceptor for Claude.app
   main.swift        Native menu bar daemon (AppKit): monitoring, alerts, state file
   hosts_helper.c    Root helper run by a LaunchDaemon (no sudoers, no setuid); writes /etc/hosts + pf
+  pf_controller.py  Root-owned backend: private PF anchor/token, request acknowledgements, hosts merge
+  pf_anchor.c       Ticket-checked insertion/removal of only our labelled root anchor call
 bin/claudeguard     Management CLI
 assets/AppIcon.png  App icon
 install.sh          Compiles natively on-device and installs everything
@@ -129,4 +160,5 @@ uninstall.sh        Clean removal, restores the original `claude`
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE). The extracted Apple PF ABI definitions in `src/vendor/pf_abi.h`
+retain their upstream notices and [Apple Public Source License](src/vendor/APPLE_LICENSE).

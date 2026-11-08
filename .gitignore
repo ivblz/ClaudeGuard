@@ -27,3 +27,4 @@ __pycache__/
 *.app/
 /bin/ClaudeGuardMenuBar
 /bin/hosts-helper
+/bin/pf-anchor

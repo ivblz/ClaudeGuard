@@ -57,6 +57,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Last enforcement pushed to the system, to skip redundant work. nil = never
     // applied, force a first apply.
     var lastAppliedDomainsBlocked: Bool? = nil
+    var enforcementError: String? = nil
+    var lastEnforcementAt = Date.distantPast
     // Alerted once for the current blocked episode (reset on leaving blocked).
     var hasAlertedThisBlock: Bool = false
 
@@ -217,7 +219,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard self.protectionEnabled else { return }
                 // Fail closed on a fresh launch, even offline: an unverified
                 // session must not start.
-                if case .allowed = self.state { return }
+                if case .allowed = self.state, self.enforcementError == nil { return }
                 app.forceTerminate()
                 self.runPkill(target: "Claude.app")
                 let reason: String
@@ -289,6 +291,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let previous = state
         state = newState
+        // Publish a denial before waiting for the privileged helper, so CLI
+        // sessions stop promptly even if applying network rules is slow.
+        if newState.domainsShouldBeBlocked { writeStateFile() }
         apply(from: previous, to: newState)
         writeStateFile()  // publish verdict for the CLI wrapper
 
@@ -306,12 +311,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .offline:  stateStr = "offline"
         case .disabled: stateStr = "disabled"
         }
-        let dict: [String: Any] = [
+        var dict: [String: Any] = [
             "state": stateStr,
             "ip": currentIP,
             "protection_enabled": protectionEnabled,
             "updated_at": Date().timeIntervalSince1970
         ]
+        if let error = enforcementError { dict["enforcement_error"] = error }
         let path = NSString(string: "~/.config/claudeguard/state.json").expandingTildeInPath
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
@@ -327,12 +333,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             lastAppliedDomainsBlocked = nil
         }
 
-        let wantBlocked = new.domainsShouldBeBlocked
-        if lastAppliedDomainsBlocked != wantBlocked {
-            lastAppliedDomainsBlocked = wantBlocked
-            runHelper("sync_hosts", wantBlocked ? "true" : "false", "")
-        }
-
         // Desktop app kill + alert.
         switch new {
         case .blocked:
@@ -344,6 +344,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .allowed, .disabled, .offline:
             // offline: don't kill a running app — nothing to protect against.
             hasAlertedThisBlock = false
+        }
+        let wantBlocked = new.domainsShouldBeBlocked
+        // Also refresh an active block periodically: another firewall can
+        // reload PF without touching hosts, or DNS targets can change.
+        let refreshBlock = wantBlocked && Date().timeIntervalSince(lastEnforcementAt) >= 60
+        if lastAppliedDomainsBlocked != wantBlocked || refreshBlock {
+            if runHelper("sync_hosts", wantBlocked ? "true" : "false", "") {
+                lastAppliedDomainsBlocked = wantBlocked
+                lastEnforcementAt = Date()
+                enforcementError = nil
+            } else {
+                lastAppliedDomainsBlocked = nil
+                enforcementError = "Network rules could not be applied; check /tmp/claudeguard.err"
+            }
         }
         _ = previous
     }
@@ -567,12 +581,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func runHelper(_ cmd: String, _ a1: String, _ a2: String) {
+    @discardableResult
+    func runHelper(_ cmd: String, _ a1: String, _ a2: String) -> Bool {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         let script = NSString(string: "~/.local/share/ClaudeGuard/src/helper.py").expandingTildeInPath
         task.arguments = [script, cmd, a1, a2]
-        try? task.run()
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Config

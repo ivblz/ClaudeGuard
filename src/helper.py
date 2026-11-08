@@ -16,7 +16,10 @@ def main():
 
     if cmd == "sync_hosts":
         block_claude = sys.argv[2].lower() == "true" if len(sys.argv) > 2 else False
-        sync_hosts_file(block_claude_domains=block_claude, config=config)
+        ok, message = sync_hosts_file(block_claude_domains=block_claude, config=config)
+        if not ok:
+            print(message, file=sys.stderr, flush=True)
+            sys.exit(1)
 
     elif cmd == "integrity":
         # Called by the daemon on a timer; logs only real changes so the normal

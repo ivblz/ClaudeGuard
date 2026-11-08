@@ -23,24 +23,35 @@ echo "=================================================="
 echo "--> Unloading LaunchAgent..."
 if [ -f "$PLIST_PATH" ]; then
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
-    rm -f "$PLIST_PATH"
-    echo "    Removed LaunchAgent: $PLIST_PATH"
 fi
 
 # 2. Terminate running background processes
 echo "--> Stopping running processes..."
 pkill -f "ClaudeGuardMenuBar" 2>/dev/null || true
-pkill -f "ClaudeGuard" 2>/dev/null || true
 
-# 2b. Remove the root network-helper LaunchDaemon + its binary, and disable pf
+# 2b. Remove only our PF anchor and enable reference. Never disable global PF.
 echo "--> Removing root network helper (LaunchDaemon)..."
 HELPER_PLIST="/Library/LaunchDaemons/com.claudeguard.helper.plist"
 HELPER_SYS_DIR="/Library/Application Support/ClaudeGuard"
 sudo launchctl bootout system "$HELPER_PLIST" 2>/dev/null || sudo launchctl unload "$HELPER_PLIST" 2>/dev/null || true
+# Prefer this checkout's backend: this also safely migrates legacy installs
+# whose old helper had no scoped cleanup command. A failure must leave the
+# backend/token available for retry rather than silently orphan firewall rules.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PF_BACKEND="$SCRIPT_DIR/src/pf_controller.py"
+[ -f "$PF_BACKEND" ] || PF_BACKEND="$HELPER_SYS_DIR/pf_controller.py"
+if [ ! -f "$PF_BACKEND" ]; then
+    echo "Cannot safely clean PF: pf_controller.py is missing. Use a complete ClaudeGuard checkout."
+    exit 1
+fi
+sudo mkdir -p "$HELPER_SYS_DIR" || exit 1
+if ! sudo /usr/bin/python3 -I "$PF_BACKEND" --unblock; then
+    echo "PF cleanup failed; installation files and token were kept. Resolve the reported error and retry."
+    exit 1
+fi
+rm -f "$PLIST_PATH"
 sudo rm -f "$HELPER_PLIST" 2>/dev/null || true
 sudo rm -rf "$HELPER_SYS_DIR" 2>/dev/null || true
-sudo /sbin/pfctl -d 2>/dev/null || true
-sudo /sbin/pfctl -F states 2>/dev/null || true
 
 # 3. Restore /etc/hosts file
 echo "--> Restoring /etc/hosts and DNS settings..."

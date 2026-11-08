@@ -96,6 +96,10 @@ if ! have clang || ! have swiftc; then
 fi
 
 # --- 1. Stage source into the install dir -----------------------------------
+# Stop the old daemon before replacing the Python files it invokes. In
+# particular, an old helper must not receive a new-format network request.
+pkill -f "ClaudeGuardMenuBar" 2>/dev/null || true
+launchctl unload "$PLIST_PATH" 2>/dev/null || true
 info "Installing to ${BOLD}$INSTALL_DIR${RST}"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/src"
 /usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' \
@@ -111,6 +115,8 @@ done
 info "Compiling privileged hosts helper (C)…"
 rm -f "$INSTALL_DIR/bin/hosts-helper" 2>/dev/null || sudo rm -f "$INSTALL_DIR/bin/hosts-helper"
 clang -O2 "$SOURCE_DIR/src/hosts_helper.c" -o "$INSTALL_DIR/bin/hosts-helper"
+info "Compiling isolated PF anchor helper (C)…"
+clang -O2 "$SOURCE_DIR/src/pf_anchor.c" -o "$INSTALL_DIR/bin/pf-anchor"
 
 info "Compiling native menu bar app (Swift)…"
 swiftc -O "$SOURCE_DIR/src/main.swift" -o "$INSTALL_DIR/bin/ClaudeGuardMenuBar"
@@ -251,7 +257,7 @@ cat > "$PLIST_PATH" <<EOF
 EOF
 pkill -f "ClaudeGuardMenuBar" 2>/dev/null || true
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load "$PLIST_PATH" 2>/dev/null || true
+# Load only after the matching root backend has been installed below.
 
 # --- 7. Root network helper via a LaunchDaemon (no sudoers) ------------------
 # The user-session daemon has no root; it stages the desired /etc/hosts + pf
@@ -277,6 +283,7 @@ HELPER_PLIST_BODY="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
     </array>
     <key>WatchPaths</key>
     <array><string>$CONFIG_DIR/pending/request</string></array>
+    <key>ThrottleInterval</key><integer>1</integer>
     <key>StandardOutPath</key><string>/tmp/claudeguard-helper.log</string>
     <key>StandardErrorPath</key><string>/tmp/claudeguard-helper.err</string>
 </dict>
@@ -284,16 +291,22 @@ HELPER_PLIST_BODY="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 
 install_root_helper() {   # $1 = sudo prefix ("" when already root)
     local S="$1"
+    $S launchctl bootout system "$HELPER_PLIST" 2>/dev/null || true
     $S mkdir -p "$HELPER_SYS_DIR"
+    $S chmod 755 "$HELPER_SYS_DIR"
     $S cp "$INSTALL_DIR/bin/hosts-helper" "$HELPER_SYS_DIR/hosts-helper"
-    $S chown root:wheel "$HELPER_SYS_DIR" "$HELPER_SYS_DIR/hosts-helper"
+    $S cp "$INSTALL_DIR/bin/pf-anchor" "$HELPER_SYS_DIR/pf-anchor"
+    $S cp "$SOURCE_DIR/src/pf_controller.py" "$HELPER_SYS_DIR/pf_controller.py"
+    $S chown root:wheel "$HELPER_SYS_DIR" "$HELPER_SYS_DIR/hosts-helper" "$HELPER_SYS_DIR/pf_controller.py"
+    $S chown root:wheel "$HELPER_SYS_DIR/pf-anchor"
+    $S chmod 755 "$HELPER_SYS_DIR/pf-anchor"
+    $S chmod 644 "$HELPER_SYS_DIR/pf_controller.py"
     $S chmod 755 "$HELPER_SYS_DIR/hosts-helper"     # root-owned, not user-writable
     printf '%s\n' "$HELPER_PLIST_BODY" | $S tee "$HELPER_PLIST" >/dev/null
     $S chown root:wheel "$HELPER_PLIST"
     $S chmod 644 "$HELPER_PLIST"
-    $S launchctl bootout system "$HELPER_PLIST" 2>/dev/null || true
     $S launchctl bootstrap system "$HELPER_PLIST" 2>/dev/null \
-        || $S launchctl load -w "$HELPER_PLIST" 2>/dev/null || true
+        || $S launchctl load -w "$HELPER_PLIST"
 }
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -305,6 +318,8 @@ else
 fi
 # The compiled copy in the user dir is never executed now; drop it.
 rm -f "$INSTALL_DIR/bin/hosts-helper" 2>/dev/null || true
+rm -f "$INSTALL_DIR/bin/pf-anchor" 2>/dev/null || true
+launchctl load "$PLIST_PATH"
 
 # --- 8. First-run: offer to whitelist the current public IP -----------------
 # Best done while you're connected to your VPN right now.

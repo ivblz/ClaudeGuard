@@ -1,9 +1,12 @@
 import ipaddress
+import fcntl
+import json
 import os
 import socket
 import subprocess
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 HOSTS_PATH = "/etc/hosts"
@@ -23,6 +26,8 @@ PENDING_DIR = os.path.join(CONFIG_DIR, "pending")
 PENDING_HOSTS = os.path.join(PENDING_DIR, "hosts.tmp")
 PF_RULE_PATH = os.path.join(PENDING_DIR, "pf.rule")
 REQUEST_FILE = os.path.join(PENDING_DIR, "request")
+STATUS_FILE = "/Library/Application Support/ClaudeGuard/network-status.json"
+ROOT_HELPER = "/Library/Application Support/ClaudeGuard/hosts-helper"
 
 APEX_DOMAINS = [
     "claude.com",
@@ -159,6 +164,14 @@ def generate_all_subdomains():
     return sorted(list(domains))
 
 def sync_hosts_file(block_claude_domains, config):
+    # Keep the staged hosts/rule/request triple consistent until acknowledged.
+    _ensure_pending()
+    with open(os.path.join(PENDING_DIR, "sync.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _sync_hosts_file(block_claude_domains, config)
+
+
+def _sync_hosts_file(block_claude_domains, config):
     """Block/unblock all Claude & Anthropic subdomains via /etc/hosts and pf
     (TCP + UDP QUIC)."""
     try:
@@ -195,7 +208,9 @@ def sync_hosts_file(block_claude_domains, config):
             ip_set = set(resolve_domain_ips(PF_RESOLVE_DOMAINS))
             # User-added custom domains are explicit intent — block whatever they
             # resolve to, no Anthropic-range filter.
-            custom = config.config.get("blocked_domains", [])
+            managed = set(generate_all_subdomains())
+            custom = [domain for domain in config.config.get("blocked_domains", [])
+                      if domain not in managed]
             if custom:
                 ip_set.update(resolve_ips(custom))
             table_body = " ".join(sorted(ip_set))
@@ -203,8 +218,7 @@ def sync_hosts_file(block_claude_domains, config):
                 f"table <claude_guard> persist {{ {table_body} }}\n"
                 f"block drop out quick proto {{ tcp, udp }} to <claude_guard>\n"
             )
-            with open(PF_RULE_PATH, "w", encoding="utf-8") as f:
-                f.write(pf_content)
+            _atomic_write(PF_RULE_PATH, pf_content)
         else:
             if os.path.exists(PF_RULE_PATH):
                 try:
@@ -244,18 +258,8 @@ def _atomic_write(path, content):
     os.replace(tmp, path)
 
 def _apply_as_root():
-    """Direct application when we already are root (installed/run as root, or
-    tests). Mirrors what hosts_helper.c does."""
-    subprocess.run(f"cp '{PENDING_HOSTS}' {HOSTS_PATH} && chmod 644 {HOSTS_PATH}",
-                   shell=True, check=False)
-    subprocess.run("/usr/bin/dscacheutil -flushcache; /usr/bin/killall -HUP mDNSResponder",
-                   shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    if os.path.exists(PF_RULE_PATH):
-        subprocess.run(f"/sbin/pfctl -e -f '{PF_RULE_PATH}' && /sbin/pfctl -F states",
-                       shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    else:
-        subprocess.run("/sbin/pfctl -d; /sbin/pfctl -F states",
-                       shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    """Use the same root-owned backend in both execution paths."""
+    subprocess.run([ROOT_HELPER, CONFIG_DIR], check=True, timeout=60)
 
 def write_hosts(content):
     """Stage the desired /etc/hosts and signal the root helper to apply it.
@@ -266,26 +270,28 @@ def write_hosts(content):
     _ensure_pending()
     _atomic_write(PENDING_HOSTS, content)
 
-    if os.geteuid() == 0:
-        _apply_as_root()
-        return
-
     # Poke the trigger. Written in place (not renamed) so launchd's kqueue watch
     # on this exact file survives across pokes.
+    request_id = uuid.uuid4().hex
     with open(REQUEST_FILE, "w", encoding="utf-8") as f:
-        f.write(str(time.time()))
+        f.write(request_id)
         f.flush()
         os.fsync(f.fileno())
 
-    # Best-effort confirm: the helper runs near-instantly, but block application
-    # is security-critical, so wait (up to ~3s) until /etc/hosts reflects the
-    # claude-block state we asked for.
-    want_block = BLOCK_HEADER in content
-    for _ in range(30):
+    if os.geteuid() == 0:
+        _apply_as_root()
+
+    # hosts markers alone cannot confirm PF success. Allow launchd throttling.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
         try:
-            with open(HOSTS_PATH, "r", encoding="utf-8") as f:
-                if (BLOCK_HEADER in f.read()) == want_block:
+            with open(STATUS_FILE, encoding="utf-8") as f:
+                status = json.load(f)
+                if status.get("request") == request_id:
+                    if not status.get("ok"):
+                        raise RuntimeError(status.get("error", "Network helper failed"))
                     return
-        except OSError:
+        except (OSError, ValueError):
             pass
         time.sleep(0.1)
+    raise RuntimeError("Network helper did not acknowledge the request within 30s")

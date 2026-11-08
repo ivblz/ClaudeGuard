@@ -43,7 +43,11 @@ def launch_claude_desktop():
         sys.exit(1)
 
     # IP is valid! Unblock domain and start app
-    sync_hosts_file(block_claude_domains=False, config=config)
+    ok, message = sync_hosts_file(block_claude_domains=False, config=config)
+    if not ok:
+        print(message, file=sys.stderr)
+        show_mac_alert("ClaudeGuard Error", "Network protection could not be updated. See the helper logs.")
+        sys.exit(1)
     open_real_app(config)
 
 def open_real_app(config):
