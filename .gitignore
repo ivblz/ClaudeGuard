@@ -28,3 +28,11 @@ __pycache__/
 /bin/ClaudeGuardMenuBar
 /bin/hosts-helper
 /bin/pf-anchor
+/dist/
+
+# Local installer builder, packaging docs, tests, and release assets
+/build.sh
+/packaging/
+/tests/test_packaging.py
+/ClaudeGuard*.pkg
+/ClaudeGuard*.pkg.sha256

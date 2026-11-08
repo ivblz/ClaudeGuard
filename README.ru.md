@@ -10,12 +10,14 @@
 
 <br>
 
-<img src="photos/protected.png" width="260" alt="Защищено">
-<img src="photos/blocked.png" width="260" alt="Заблокировано">
-<img src="photos/no_conection.png" width="260" alt="Офлайн">
+<img src="photos/vpn_ok.png" width="190" alt="Защищено (VPN OK)">
+<img src="photos/blocked.png" width="190" alt="Заблокировано">
+<img src="photos/disable.png" width="190" alt="Защита выключена">
+<img src="photos/offline.png" width="190" alt="Офлайн (нет подключения)">
+<br>
 
-<img src="photos/ip_whitelist.png" width="390" alt="IP Whitelist">
-<img src="photos/add_model.png" width="390" alt="Модель по умолчанию">
+<img src="photos/ip_whitelist.png" width="350" alt="IP Whitelist">
+<img src="photos/add_model.png" width="350" alt="Модель по умолчанию">
 
 </div>
 

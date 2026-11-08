@@ -10,12 +10,14 @@ Blocks the **Claude Desktop** app, the **Claude Code CLI** (`claude`) and every 
 
 <br>
 
-<img src="photos/protected.png" width="260" alt="Protected">
-<img src="photos/blocked.png" width="260" alt="Blocked">
-<img src="photos/no_conection.png" width="260" alt="Offline">
+<img src="photos/vpn_ok.png" width="190" alt="Protected (VPN OK)">
+<img src="photos/blocked.png" width="190" alt="Blocked">
+<img src="photos/disable.png" width="190" alt="Protection Disabled">
+<img src="photos/offline.png" width="190" alt="Offline (no connection)">
+<br>
 
-<img src="photos/ip_whitelist.png" width="390" alt="IP Whitelist">
-<img src="photos/add_model.png" width="390" alt="Default Model">
+<img src="photos/ip_whitelist.png" width="350" alt="IP Whitelist">
+<img src="photos/add_model.png" width="350" alt="Default Model">
 
 </div>
 
