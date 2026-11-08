@@ -8,8 +8,6 @@ __pycache__/
 # Local secrets and credentials
 .env
 .env.*
-!.env.example
-!.env.sample
 *.pem
 *.key
 *.p12
@@ -23,16 +21,11 @@ __pycache__/
 /pending/
 *.log
 
-# Local build artifacts
+# macOS app bundles
 *.app/
-/bin/ClaudeGuardMenuBar
-/bin/hosts-helper
-/bin/pf-anchor
-/dist/
 
-# Local installer builder, packaging docs, tests, and release assets
+# Local tests and installer tooling
+/tests/
 /build.sh
 /packaging/
-/tests/test_packaging.py
-/ClaudeGuard*.pkg
-/ClaudeGuard*.pkg.sha256
+/ClaudeGuard.pkg

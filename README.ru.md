@@ -39,12 +39,24 @@ ClaudeGuard решает эту проблему: каждый запуск и �
 
 ## Установка
 
+### Установщик PKG
+
+1. Скачайте `ClaudeGuard.pkg` из файлов релиза на [GitHub Releases](https://github.com/ivblz/ClaudeGuard/releases) и откройте его.
+2. Следуйте шагам установщика и введите пароль администратора при запросе.
+3. Подключитесь к VPN, нажмите на щит в строке меню и добавьте IP своего VPN через **Manage Whitelisted IPs…**. При первой установке доступ к Claude заблокирован до добавления разрешённого IP.
+
+Пакет содержит бинарники для Apple Silicon и Intel и требует **macOS 14 или новее**. **Для Python 3 по-прежнему нужны Xcode Command Line Tools**: если их нет, выполните `xcode-select --install` в Терминале, дождитесь завершения и снова откройте установщик. При обновлении существующие настройки сохраняются.
+
+Текущий пакет не подписан и не нотариализован. Если macOS блокирует пакет, которому вы доверяете, разрешите его открытие в **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**.
+
+### Сборка из исходников
+
 Установщик компилирует нативные бинарники (Swift + C) **прямо на вашей машине**. Собранное локально не имеет
 quarantine-флага, поэтому **Gatekeeper ничего не блокирует** - не нужен ни Apple Developer аккаунт, ни подпись,
 ни нотаризация, ни Homebrew. Единственное требование - Xcode Command Line Tools (установщик сам предложит
 их поставить, если их нет).
 
-Два способа установки - результат абсолютно одинаковый.
+Выберите один из двух способов установки из исходников:
 
 **Вариант 1 - одной строкой** (скачает и соберёт с GitHub):
 
@@ -62,7 +74,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/i
 автозапуск и повесит обёртку на `claude`. Один раз спросит пароль (`sudo` нужен для правки `/etc/hosts` и pf)
 и предложит добавить текущий IP в whitelist - соглашайтесь, **только если вы сейчас под своим VPN.**
 
-**Удаление:**
+### Удаление
+
+После установки через PKG:
+
+```bash
+bash ~/.local/share/ClaudeGuard/uninstall.sh
+```
+
+Из локальной копии исходников:
 
 ```bash
 ./uninstall.sh
@@ -134,11 +154,6 @@ macOS проверяется чтением перед изменениями; �
 Активный блок также обновляется каждые 60 секунд. При ошибке pf блок в `/etc/hosts` сохраняется.
 Подробности: `/tmp/claudeguard.err`, `/tmp/claudeguard-helper.err`.
 
-Локальные тесты без изменения системного firewall: `python3 -B -m unittest discover -s tests -v`.
-Нативные тесты: `clang -Wall -Wextra -Werror tests/test_pf_anchor.c -o /tmp/test-pf-anchor && /tmp/test-pf-anchor`.
-`tests/live_pf_check.py` — отдельный тест с sudo: временно блокирует один IP Claude,
-проверяет TCP до/во время/после блока и сохранность Internet Sharing, NAT и token.
-
 ## Структура проекта
 
 ```
@@ -146,18 +161,27 @@ src/
   brain.py          Единое ядро решения (читает вердикт демона; STUN-фолбэк)
   ip_checker.py     Детект внешнего IP: STUN по UDP, затем HTTP
   config.py         Конфиг в ~/.config/claudeguard/config.json
-  network_guard.py  Блок/разблок через /etc/hosts + pf firewall
+  network_guard.py  Подготавливает запросы блокировки hosts/PF для root-хелпера
   integrity.py      Ищет реальные пути Claude; переподключает перехваты после переустановки
   cli_wrapper.py    Pre-flight перехватчик команды `claude`
   app_launcher.py   Pre-flight перехватчик Claude.app
+  helper.py         Python-мост для меню-бара: синхронизация сети и восстановление перехватов
   main.swift        Нативный меню-бар демон (AppKit): мониторинг, алерты, state-файл
-  hosts_helper.c    Root-хелпер, запускается LaunchDaemon (без sudoers и setuid): пишет /etc/hosts + pf
+  hosts_helper.c    Точка входа LaunchDaemon; запускает root-owned Python backend в изолированном режиме
   pf_controller.py  Root-owned backend: отдельный pf anchor, token, подтверждение запросов, слияние hosts
   pf_anchor.c       Точечное добавление/удаление только помеченного вызова нашего anchor
+  vendor/
+    pf_abi.h        Определения ABI Apple PF для нативного anchor-хелпера
+    APPLE_LICENSE   Лицензия извлечённого кода Apple
+    README.md       Источники и примечания по ABI
 bin/claudeguard     CLI управления
 assets/AppIcon.png  Иконка приложения
+photos/            Скриншоты для README
 install.sh          Компилирует нативно на устройстве и всё ставит
 uninstall.sh        Чистое удаление, восстанавливает оригинальный `claude`
+README.md           Документация на английском
+README.ru.md        Документация на русском
+LICENSE             Лицензия проекта
 ```
 
 ## Лицензия

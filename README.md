@@ -39,12 +39,24 @@ ClaudeGuard solves that: every launch and every running session is checked again
 
 ## Install
 
+### PKG installer
+
+1. Download `ClaudeGuard.pkg` from the [GitHub Releases](https://github.com/ivblz/ClaudeGuard/releases) assets and open it.
+2. Follow the installer and enter an administrator password when prompted.
+3. Connect to your VPN, click the shield in the menu bar, and add your VPN IP through **Manage Whitelisted IPs…**. On first installation, access to Claude stays blocked until you add an allowed IP.
+
+The package includes Apple Silicon and Intel binaries and requires **macOS 14 or later**. **Xcode Command Line Tools are still required for Python 3**; if missing, run `xcode-select --install` in Terminal, wait for it to finish, and reopen the installer. Existing settings are preserved when upgrading.
+
+The current package is unsigned and not notarized. If macOS blocks a package you trust, allow it in **System Settings → Privacy & Security → Open Anyway**.
+
+### Build from source
+
 The installer compiles the native binaries (Swift + C) **on your machine**. Locally-compiled binaries
 carry no quarantine flag, so **Gatekeeper never blocks them** - no Apple Developer account, no code-signing,
 no notarization, no Homebrew. The only requirement is Xcode Command Line Tools (the installer offers to
 install them if missing).
 
-Two ways to install - both give the exact same result.
+Choose either source installation method:
 
 **Option 1 - one line** (downloads and builds from GitHub):
 
@@ -62,7 +74,15 @@ Either way it compiles for your architecture (Apple Silicon or Intel), installs 
 and wraps the `claude` command. It asks for your password once (`sudo` is needed to edit `/etc/hosts` and pf)
 and offers to whitelist your current IP - accept **only if you are on your VPN right now.**
 
-**Uninstall:**
+### Uninstall
+
+After a PKG installation:
+
+```bash
+bash ~/.local/share/ClaudeGuard/uninstall.sh
+```
+
+From a local source checkout:
 
 ```bash
 ./uninstall.sh
@@ -133,12 +153,6 @@ retried and propagated to launch checks, without an extra menu state. Active blo
 refreshed every 60 seconds. Hosts blocking remains in place on PF failure. Logs:
 `/tmp/claudeguard.err` and `/tmp/claudeguard-helper.err`.
 
-Run isolated tests without touching the system firewall:
-`python3 -B -m unittest discover -s tests -v`.
-Native tests: `clang -Wall -Wextra -Werror tests/test_pf_anchor.c -o /tmp/test-pf-anchor && /tmp/test-pf-anchor`.
-`tests/live_pf_check.py` is a separate opt-in root test that temporarily blocks one Claude IP
-and verifies TCP recovery and preservation of Internet Sharing/NAT/reference state.
-
 ## Project structure
 
 ```
@@ -146,18 +160,27 @@ src/
   brain.py          The single decision core (reads the daemon verdict; STUN fallback)
   ip_checker.py     Public-IP detection: STUN over UDP, then HTTP
   config.py         Config at ~/.config/claudeguard/config.json
-  network_guard.py  /etc/hosts + pf firewall block/unblock
+  network_guard.py  Stages hosts/PF block and unblock requests for the root helper
   integrity.py      Finds Claude's real paths; re-attaches hooks after a reinstall
   cli_wrapper.py    Pre-flight interceptor for the `claude` command
   app_launcher.py   Pre-flight interceptor for Claude.app
+  helper.py         Python bridge for menu bar actions: network sync and hook repair
   main.swift        Native menu bar daemon (AppKit): monitoring, alerts, state file
-  hosts_helper.c    Root helper run by a LaunchDaemon (no sudoers, no setuid); writes /etc/hosts + pf
+  hosts_helper.c    LaunchDaemon entry point; runs the root-owned Python backend in isolated mode
   pf_controller.py  Root-owned backend: private PF anchor/token, request acknowledgements, hosts merge
   pf_anchor.c       Ticket-checked insertion/removal of only our labelled root anchor call
+  vendor/
+    pf_abi.h        Extracted Apple PF ABI definitions used by the native anchor helper
+    APPLE_LICENSE   License for the extracted Apple code
+    README.md       Source attribution and ABI notes
 bin/claudeguard     Management CLI
 assets/AppIcon.png  App icon
+photos/            README screenshots
 install.sh          Compiles natively on-device and installs everything
 uninstall.sh        Clean removal, restores the original `claude`
+README.md           English documentation
+README.ru.md        Russian documentation
+LICENSE             Project license
 ```
 
 ## License
