@@ -127,7 +127,7 @@ python3 -B tests/check_menu_mode.py
 CLAUDEGUARD_TEST_ENGINE=/path/to/sing-box python3 -B -m unittest discover -s tests
 ```
 
-Unit tests mostly use mocks or temporary files; they do not prove live PF/TUN enforcement. Manual live tests under `tests/` are opt-in and may change the machine; read them before running. Generated local proxy profiles, credentials and package artifacts are excluded from Git. See [local proxy lab](tests/local-proxy-lab/README.md).
+Unit tests mostly use mocks or temporary files; they do not prove live PF/TUN enforcement. Manual live tests under `tests/` are opt-in and may change the machine; read them before running.
 
 Main components: `src/main.swift` and `ModeSegmentedControl.swift` (UI), `brain.py` (verdict), `config.py`, `ip_checker.py`, `network_guard.py` (staging/DNS), `pf_controller.py` and `pf_anchor.c` (PF), `proxy*.py` (profiles/engine), `integrity.py` (hooks), `cli_wrapper.py`, `app_launcher.py`, and `bin/claudeguard`. Root-owned components must be updated through an installer, not by copying only user-side Python files.
 
