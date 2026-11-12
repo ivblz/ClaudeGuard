@@ -53,3 +53,15 @@ venv/
 # Generated local proxy test profiles and machine-specific paths
 /tests/local-proxy-lab/profiles/
 /tests/local-proxy-lab/manifest.json
+
+# Private local lab files and secret-scan reports
+/tests/local-proxy-lab/
+**/config.json
+**/state.json
+**/pending/
+**/proxy.json
+**/proxy-next.json
+**/dns_cache.json
+**/manifest.json
+gitleaks*.json
+*secrets-report*.json
