@@ -26,7 +26,53 @@ enum GuardState: Equatable {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+// Diagnostics only: no user data, endpoints, IPs or exception text in labels.
+private enum SwitchTrace {
+    static var enabled = ProcessInfo.processInfo.environment["CLAUDEGUARD_TRACE"] == "1"
+    static let path = NSString(string: "~/.config/claudeguard/trace.log").expandingTildeInPath
+    static func begin() -> TimeInterval? { enabled ? ProcessInfo.processInfo.systemUptime : nil }
+    static func end(_ start: TimeInterval?, _ stage: String, _ result: String = "completed") {
+        guard let start = start else { return }
+        let duration = (ProcessInfo.processInfo.systemUptime - start) * 1000
+        let line = "\(ISO8601DateFormatter().string(from: Date())) stage=\(stage) duration_ms=\(String(format: "%.3f", duration)) result=\(result)\n"
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return }
+        line.withCString { bytes in _ = write(fd, bytes, strlen(bytes)) }
+    }
+}
+
+// Shared native input window for IPs, model IDs and proxy profiles.
+final class SettingsInputWindow: NSWindow, NSWindowDelegate {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+           let editor = firstResponder as? NSTextView {
+            // Physical-key fallback keeps editing shortcuts working with Russian layouts.
+            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            let shortcut = ["c", "v", "x", "a", "z"].contains(key) ? key
+                : ([UInt16(8): "c", 9: "v", 7: "x", 0: "a", 6: "z"][event.keyCode] ?? key)
+            switch shortcut {
+            case "c": editor.copy(nil)
+            case "v": editor.paste(nil)
+            case "x": editor.cut(nil)
+            case "a": editor.selectAll(nil)
+            case "z":
+                if event.modifierFlags.contains(.shift) { editor.undoManager?.redo() }
+                else { editor.undoManager?.undo() }
+            default: return super.performKeyEquivalent(with: event)
+            }
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+    @objc func acceptInput() { NSApp.stopModal(withCode: .OK) }
+    @objc func cancelInput() { NSApp.abortModal() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.abortModal(); return true }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var menu: NSMenu!
 
@@ -35,6 +81,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var protectionEnabled: Bool = true
     var modelOverrideEnabled: Bool = false
     var defaultModel: String = "claude-opus-4-8"
+    var proxyEndpoint = "Not configured"
+    var proxyEnabled = true
+    var proxyProfileID = ""
+    var proxyError = ""
+    var connectionMode: ConnectionMode = .vpn
+    var menuIsOpen = false
+    var menuRows: [String: NSMenuItem] = [:]
+    lazy var modeControl: ModeSegmentedControl = {
+        let control = ModeSegmentedControl(selected: connectionMode)
+        control.onChange = { [weak self] mode in self?.onModeChanged(mode) }
+        return control
+    }()
+    lazy var modeMenuItem: NSMenuItem = {
+        let item = NSMenuItem()
+        item.view = modeControl
+        return item
+    }()
+    func menuWillOpen(_ menu: NSMenu) { menuIsOpen = true }
+    func menuDidClose(_ menu: NSMenu) { menuIsOpen = false; rebuildMenu() }
+    private var switchTiming: (id: UUID, start: TimeInterval, stage: String)?
+    func onModeChanged(_ mode: ConnectionMode) {
+        if let started = SwitchTrace.begin() {
+            if let previous = switchTiming { SwitchTrace.end(previous.start, previous.stage, "superseded") }
+            switchTiming = (UUID(), started, "switch." + connectionMode.rawValue + "_to_" + mode.rawValue)
+        }
+        connectionMode = mode
+        if mode == .proxy { proxyEnabled = true }
+        proxyError = ""
+        proxyProfileID = ""
+        currentIP = "…"
+        state = .offline
+        saveConfig()
+        writeStateFile()
+        lastAppliedDomainsBlocked = nil
+        rebuildMenu()
+        recheckAsync()
+    }
+
     var allowedIPs: [String] = []
 
     var dynamicStore: SCDynamicStore?
@@ -82,10 +166,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        updateStatusDisplay()
         menu = NSMenu()
+        menu.delegate = self
         statusItem.menu = menu
 
         loadConfig()
+        // Migrate the removed standalone Disconnect state. Mode + Protection now control access.
+        if !proxyEnabled { proxyEnabled = true; saveConfig() }
         rebuildMenu()
 
         setupAppLaunchInterceptor()
@@ -128,7 +216,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         else { return false }
         let hasDomains = content.contains("# BEGIN CLAUDEGUARD BLOCKS")
         let hasUpdates = content.contains("# BEGIN CLAUDEGUARD UPDATE BLOCKS")
-        return hasDomains != wantDomains || hasUpdates
+        let expectHostsBlock = wantDomains && connectionMode != .vpn
+        return hasDomains != expectHostsBlock || hasUpdates
     }
 
     /// Claude Desktop, matched by bundle-id *prefix* — the exact id has already
@@ -153,7 +242,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.hasNetworkPath = satisfied
             // Connectivity flipped — re-verify. Down → recheck() declares offline
             // instantly; up → recheck() runs the IP check.
-            if changed { self.startBlinking() }
+            if changed { self.lastAppliedDomainsBlocked = nil; self.startBlinking() }
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + (satisfied ? 0.4 : 0.0)) {
                 self.recheck()
             }
@@ -172,6 +261,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let me = Unmanaged<AppDelegate>.fromOpaque(info).takeUnretainedValue()
             // Network event fired — don't act blindly, just re-verify once it
             // settles; recheck() decides.
+            me.lastAppliedDomainsBlocked = nil
             me.startBlinking()
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { me.recheck() }
         }
@@ -200,6 +290,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
+            self.lastAppliedDomainsBlocked = nil
             self.startBlinking()
             for delay in [0.5, 3.0, 8.0] {
                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) {
@@ -227,7 +318,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .offline: reason = "No internet connection — your IP can't be verified."
                 default:       reason = "Your public IP (\(self.currentIP)) is not in your allowed VPN whitelist."
                 }
-                self.showBlockedAlert(reason: reason)
+                self.showBlockedAlert(reason: self.connectionMode == .proxy ? "Proxy is disconnected or unavailable." : reason)
             }
         }
     }
@@ -265,11 +356,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// One verification pass: resolve the public IP, fold it into a GuardState,
     /// push enforcement on transitions, publish the verdict.
     func performCheck() {
+        let timingID = switchTiming?.id
+        let configurationSnapshot = try? Data(contentsOf: URL(fileURLWithPath: configPath))
         loadConfig()
 
+        // Install the VPN denial before the first network verification.
+        if protectionEnabled && connectionMode == .vpn && lastAppliedDomainsBlocked == nil {
+            if runHelper("sync_hosts", "true", "") {
+                lastAppliedDomainsBlocked = true
+                lastEnforcementAt = Date()
+            }
+        }
         let newState: GuardState
+        // Keep results local until the configuration snapshot is validated.
+        // A completed proxy probe must not overwrite the IP of a new VPN mode.
+        var checkedIP = currentIP
+        var checkedError = proxyError
+        var checkedProfileID = proxyProfileID
+        var preparedProxy = false
         if !protectionEnabled {
             newState = .disabled
+        } else if connectionMode == .proxy && proxyEndpoint == "Not configured" {
+            checkedIP = "Unavailable"
+            checkedError = "Proxy is not configured"
+            checkedProfileID = ""
+            newState = .blocked(ip: "Unavailable")
+        } else if connectionMode == .proxy {
+            let result = checkProxy()
+            checkedIP = result.ip ?? "Unavailable"
+            checkedError = result.error
+            checkedProfileID = result.profileID
+            preparedProxy = result.prepared
+            newState = result.ip.map { .allowed(ip: $0) } ?? .blocked(ip: "Unavailable")
         } else {
             // `hasNetworkPath` is only a *hint* for snappy offline detection —
             // never a latch. Even when it says "no route" we still attempt a
@@ -279,31 +397,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let ip = hasNetworkPath ? resolvePublicIPWithRetry()
                                     : resolvePublicIP(deadline: 1.5)
             if let ip = ip {
-                currentIP = ip
+                checkedIP = ip
                 if !hasNetworkPath { hasNetworkPath = true }   // hint was stale
                 let ok = Self.isIPAllowed(ip, allowedList: allowedIPs)
                 newState = ok ? .allowed(ip: ip) : .blocked(ip: ip)
             } else {
-                currentIP = "No Internet"
+                checkedIP = "No Internet"
                 newState = .offline
             }
         }
 
+        // Discard a network result obtained for settings changed during the check.
+        // In particular, a late VPN result must never approve a newly selected proxy.
+        guard configurationSnapshot == (try? Data(contentsOf: URL(fileURLWithPath: configPath))) else {
+            checkLock.lock(); recheckQueued = true; checkLock.unlock()
+            return
+        }
+        currentIP = checkedIP
+        proxyError = checkedError
+        proxyProfileID = checkedProfileID
+        if preparedProxy {
+            // proxy_check already received the privileged helper's acknowledgement.
+            // Avoid resolving DNS and applying the identical rules a second time.
+            lastAppliedDomainsBlocked = false
+            lastEnforcementAt = Date()
+            enforcementError = nil
+        }
         let previous = state
         state = newState
         // Publish a denial before waiting for the privileged helper, so CLI
         // sessions stop promptly even if applying network rules is slow.
         if newState.domainsShouldBeBlocked { writeStateFile() }
         apply(from: previous, to: newState)
+        if protectionEnabled && enforcementError != nil { state = .blocked(ip: currentIP) }
         writeStateFile()  // publish verdict for the CLI wrapper
 
-        DispatchQueue.main.async { self.updateStatusDisplay(); self.rebuildMenu() }
+        DispatchQueue.main.async {
+            self.updateStatusDisplay(); self.rebuildMenu()
+            if let timing = self.switchTiming, timing.id == timingID {
+                SwitchTrace.end(timing.start, timing.stage, self.enforcementError == nil ? "completed" : "error")
+                self.switchTiming = nil
+            }
+        }
     }
 
     /// Publishes the verdict to state.json (single source of truth for the CLI
     /// wrapper). Written atomically each recheck; a stale file signals the
     /// daemon is down and the wrapper should fall back to its own check.
     func writeStateFile() {
+        let timing = SwitchTrace.begin()
+        defer { SwitchTrace.end(timing, "state_json.write") }
         let stateStr: String
         switch state {
         case .allowed:  stateStr = "allowed"
@@ -313,6 +456,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         var dict: [String: Any] = [
             "state": stateStr,
+            "mode": connectionMode.rawValue,
+            "proxy_profile_id": proxyProfileID,
             "ip": currentIP,
             "protection_enabled": protectionEnabled,
             "updated_at": Date().timeIntervalSince1970
@@ -339,7 +484,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let killed = killDesktopIfRunning()
             if killed && !hasAlertedThisBlock {   // alert once per blocked episode
                 hasAlertedThisBlock = true
-                showBlockedAlert(reason: "Your public IP (\(currentIP)) is not in your allowed VPN whitelist.")
+                showBlockedAlert(reason: connectionMode == .proxy ? "Proxy connection could not be verified. Check Configure Proxy and connection status." : "Your public IP (\(currentIP)) is not in your allowed VPN whitelist.")
             }
         case .allowed, .disabled, .offline:
             // offline: don't kill a running app — nothing to protect against.
@@ -348,7 +493,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let wantBlocked = new.domainsShouldBeBlocked
         // Also refresh an active block periodically: another firewall can
         // reload PF without touching hosts, or DNS targets can change.
-        let refreshBlock = wantBlocked && Date().timeIntervalSince(lastEnforcementAt) >= 60
+        let refreshBlock = (wantBlocked || protectionEnabled) && Date().timeIntervalSince(lastEnforcementAt) >= 60
         if lastAppliedDomainsBlocked != wantBlocked || refreshBlock {
             if runHelper("sync_hosts", wantBlocked ? "true" : "false", "") {
                 lastAppliedDomainsBlocked = wantBlocked
@@ -583,6 +728,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @discardableResult
     func runHelper(_ cmd: String, _ a1: String, _ a2: String) -> Bool {
+        let timing = SwitchTrace.begin()
+        var traceResult = "error"
+        defer { SwitchTrace.end(timing, "helper." + (["sync_hosts", "integrity"].contains(cmd) ? cmd : "other"), traceResult) }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         let script = NSString(string: "~/.local/share/ClaudeGuard/src/helper.py").expandingTildeInPath
@@ -590,6 +738,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try task.run()
             task.waitUntilExit()
+            traceResult = task.terminationStatus == 0 ? "ok" : "error"
             return task.terminationStatus == 0
         } catch {
             return false
@@ -599,8 +748,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Config
 
     func loadConfig() {
+        guard secureConfigPermissions() else { return }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        SwitchTrace.enabled = ProcessInfo.processInfo.environment["CLAUDEGUARD_TRACE"] == "1" || json["trace"] as? Bool == true
+        proxyEnabled = json["proxy_enabled"] as? Bool ?? true
+        if let profile = json["proxy_profile"] as? [String: Any],
+           let host = profile["server"] as? String, let port = profile["server_port"] as? Int {
+            proxyEndpoint = "\(profile["type"] as? String ?? "proxy")://\(host):\(port)"
+        } else { proxyEndpoint = "Not configured" }
+        let loadedMode = ConnectionMode(rawValue: json["connection_mode"] as? String ?? "vpn") ?? .vpn
+        if loadedMode != connectionMode {
+            lastAppliedDomainsBlocked = nil
+            currentIP = "…"
+            proxyProfileID = ""
+            proxyError = ""
+            state = protectionEnabled ? .offline : .disabled
+        }
+        connectionMode = loadedMode
         if let ips = json["allowed_ips"] as? [String] { allowedIPs = ips }
         if let p = json["protection_enabled"] as? Bool { protectionEnabled = p }
         if let m = json["model_override_enabled"] as? Bool { modelOverrideEnabled = m }
@@ -608,30 +773,64 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func saveConfig() {
+        guard secureConfigPermissions() else { return }
         var json: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { json = existing }
+        json["proxy_enabled"] = proxyEnabled
+        json["connection_mode"] = connectionMode.rawValue
         json["allowed_ips"] = allowedIPs
         json["protection_enabled"] = protectionEnabled
         json["model_override_enabled"] = modelOverrideEnabled
         json["default_model"] = defaultModel
         if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
-            try? data.write(to: URL(fileURLWithPath: configPath))
+            let fd = open(configPath, O_WRONLY | O_CREAT | O_NOFOLLOW, mode_t(0o600))
+            guard fd >= 0 else { return }
+            defer { close(fd) }
+            guard fchmod(fd, mode_t(0o600)) == 0, ftruncate(fd, 0) == 0 else { return }
+            data.withUnsafeBytes { bytes in
+                var offset = 0
+                while offset < bytes.count {
+                    let count = write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { return }
+                    offset += count
+                }
+            }
         }
+    }
+
+    private func secureConfigPermissions() -> Bool {
+        let directory = (configPath as NSString).deletingLastPathComponent
+        do {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+        } catch { return false }
+        guard chmod(directory, mode_t(0o700)) == 0 else { return false }
+        if !FileManager.default.fileExists(atPath: configPath) { return true }
+        let fd = open(configPath, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        return fchmod(fd, mode_t(0o600)) == 0
     }
 
     // MARK: - UI
 
     func statusText() -> String {
+        if protectionEnabled && connectionMode == .proxy && proxyEndpoint == "Not configured" {
+            return "Status: 🔴 Proxy not configured"
+        }
         switch state {
         case .offline:  return "Status: ⚪ Offline (no connection)"
         case .disabled: return "Status: 🟡 Protection Disabled"
-        case .allowed:  return "Status: 🟢 Protected (VPN OK)"
-        case .blocked:  return "Status: 🔴 BLOCKED (unallowed network)"
+        case .allowed:  return connectionMode == .proxy ? "Status: 🟢 Protected (Proxy OK)" : "Status: 🟢 Protected (VPN OK)"
+        case .blocked:  return connectionMode == .proxy ? "Status: 🔴 Proxy unavailable" : "Status: 🔴 BLOCKED (unallowed network)"
         }
     }
 
     func updateStatusDisplay(isDimmed: Bool = false) {
+        let timing = SwitchTrace.begin()
+        defer { SwitchTrace.end(timing, "ui.status.update") }
         guard let button = statusItem.button else { return }
         button.title = ""
         button.attributedTitle = NSAttributedString(string: "")
@@ -688,58 +887,165 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func rebuildMenu() {
-        menu.removeAllItems()
-
-        let status = NSMenuItem(title: statusText(), action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-
-        let ipItem = NSMenuItem(title: "🌐 Current IP: \(currentIP)", action: nil, keyEquivalent: "")
-        ipItem.isEnabled = false
-        menu.addItem(ipItem)
-
-        menu.addItem(.separator())
-
-        let recheck = NSMenuItem(title: "🔄 Re-check Now", action: #selector(onRecheck), keyEquivalent: "")
-        recheck.target = self
-        menu.addItem(recheck)
-
-        menu.addItem(.separator())
-
-        let prot = NSMenuItem(title: protectionEnabled ? "✓ Protection Active" : "Protection Disabled", action: #selector(onToggleProtection), keyEquivalent: "")
-        prot.target = self
-        menu.addItem(prot)
-
-        menu.addItem(.separator())
-
-        let modelToggle = NSMenuItem(title: modelOverrideEnabled ? "✓ Default Model: \(defaultModel)" : "Default Model Override (off)", action: #selector(onToggleModelOverride), keyEquivalent: "")
-        modelToggle.target = self
-        menu.addItem(modelToggle)
-
-        if modelOverrideEnabled {
-            let changeModel = NSMenuItem(title: "    Change Model…", action: #selector(onChangeModel), keyEquivalent: "")
-            changeModel.target = self
-            menu.addItem(changeModel)
+        let timing = SwitchTrace.begin()
+        defer { SwitchTrace.end(timing, "ui.menu.update") }
+        // Keep the segmented control and menu rows alive during menu tracking.
+        // Updating titles/visibility avoids dropping the control's mouseUp event.
+        if menuRows.isEmpty {
+            func row(_ key: String, _ action: Selector? = nil) {
+                let item = NSMenuItem(title: "", action: action, keyEquivalent: "")
+                item.target = action == nil ? nil : self
+                item.isEnabled = action != nil
+                menuRows[key] = item
+                menu.addItem(item)
+            }
+            row("status")
+            menu.addItem(modeMenuItem)
+            row("endpoint")
+            menu.addItem(.separator())
+            row("recheck", #selector(onRecheck))
+            menu.addItem(.separator())
+            row("protection", #selector(onToggleProtection))
+            menu.addItem(.separator())
+            row("model", #selector(onToggleModelOverride))
+            row("changeModel", #selector(onChangeModel))
+            menu.addItem(.separator())
+            row("addIP", #selector(onAddCurrentIP))
+            row("manageIPs", #selector(onManageIPs))
+            row("proxy", #selector(onConfigureProxy))
+            menu.addItem(.separator())
+            row("quit", #selector(onQuit))
         }
-
-        menu.addItem(.separator())
-
-        if !currentIP.isEmpty, currentIP != "No Internet", currentIP != "…", !allowedIPs.contains(currentIP) {
-            let add = NSMenuItem(title: "➕ Whitelist Current IP (\(currentIP))", action: #selector(onAddCurrentIP), keyEquivalent: "")
-            add.target = self
-            menu.addItem(add)
-        }
-
-        let manage = NSMenuItem(title: "⚙️ Manage Whitelisted IPs…", action: #selector(onManageIPs), keyEquivalent: "")
-        manage.target = self
-        menu.addItem(manage)
-
-        menu.addItem(.separator())
-
-        let quit = NSMenuItem(title: "Quit ClaudeGuard", action: #selector(onQuit), keyEquivalent: "")
-        quit.target = self
-        menu.addItem(quit)
+        let isProxy = connectionMode == .proxy
+        menuRows["status"]?.title = statusText()
+        modeControl.setSelectedMode(connectionMode, animated: false)
+        modeControl.isEnabled = protectionEnabled
+        menuRows["endpoint"]?.title = isProxy ? "Proxy: \(proxyEndpoint)" : "Current IP: \(currentIP)"
+        menuRows["recheck"]?.title = "🔄 Re-check Now"
+        menuRows["protection"]?.title = protectionEnabled ? "✓ Protection Active" : "Protection Disabled"
+        menuRows["model"]?.title = modelOverrideEnabled ? "✓ Default Model: \(defaultModel)" : "Default Model Override (off)"
+        menuRows["changeModel"]?.title = "    Change Model…"
+        menuRows["changeModel"]?.isHidden = !modelOverrideEnabled
+        menuRows["addIP"]?.title = "➕ Whitelist Current IP (\(currentIP))"
+        menuRows["addIP"]?.isHidden = isProxy || currentIP.isEmpty || ["No Internet", "…", "Unavailable"].contains(currentIP) || allowedIPs.contains(currentIP)
+        menuRows["manageIPs"]?.title = "⚙️ Manage Whitelisted IPs…"
+        menuRows["manageIPs"]?.isHidden = isProxy
+        menuRows["proxy"]?.title = "⚙️ Configure Proxy…"
+        menuRows["proxy"]?.isHidden = !isProxy
+        menuRows["quit"]?.title = "Quit ClaudeGuard"
+        menu.update()
     }
+
+    func checkProxy() -> (ip: String?, error: String, profileID: String, prepared: Bool) {
+        let timing = SwitchTrace.begin()
+        defer { SwitchTrace.end(timing, "helper.proxy_check") }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        task.arguments = [NSString(string: "~/.local/share/ClaudeGuard/src/helper.py").expandingTildeInPath, "proxy_check"]
+        let pipe = Pipe(); task.standardOutput = pipe
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return (nil, "Invalid proxy check response", "", false)
+            }
+            let ok = json["ok"] as? Bool == true
+            return (ok ? json["ip"] as? String : nil, json["error"] as? String ?? "",
+                    json["profile_id"] as? String ?? "", ok && json["prepared"] as? Bool == true)
+        } catch { return (nil, "Proxy check failed", "", false) }
+    }
+
+    func promptText(title: String, prompt: String, value: String) -> String? {
+        let window = SettingsInputWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 210),
+                                         styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = title
+        window.isReleasedWhenClosed = false
+        window.delegate = window
+        let label = NSTextField(wrappingLabelWithString: prompt)
+        label.frame = NSRect(x: 24, y: 124, width: 472, height: 56)
+        label.font = .systemFont(ofSize: 14)
+        let field = NSTextField(frame: NSRect(x: 24, y: 78, width: 472, height: 28))
+        field.font = .systemFont(ofSize: 14)
+        field.stringValue = value
+        let cancel = NSButton(title: "Cancel", target: window, action: #selector(SettingsInputWindow.cancelInput))
+        cancel.frame = NSRect(x: 302, y: 22, width: 94, height: 32)
+        cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
+        let okay = NSButton(title: "OK", target: window, action: #selector(SettingsInputWindow.acceptInput))
+        okay.frame = NSRect(x: 402, y: 22, width: 94, height: 32)
+        okay.bezelStyle = .rounded; okay.keyEquivalent = "\r"
+        [label, field, cancel, okay].forEach { window.contentView?.addSubview($0) }
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(field)
+        field.selectText(nil)
+        let response = NSApp.runModal(for: window)
+        let entered = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        window.orderOut(nil); window.close()
+        return response == .OK ? entered : nil
+    }
+
+    func currentProxyInput() -> String {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profile = config["proxy_profile"] as? [String: Any] else { return "" }
+        // Keep advanced profiles intact; simple HTTP/SOCKS profiles are easier to edit as URLs.
+        let urlFields: Set<String> = ["type", "server", "server_port", "username", "password", "version"]
+        if Set(profile.keys).isSubset(of: urlFields),
+           let type = profile["type"] as? String, ["http", "socks"].contains(type),
+           let host = profile["server"] as? String, let port = profile["server_port"] as? Int {
+            var url = URLComponents()
+            url.scheme = type == "socks" ? "socks\(profile["version"] as? String ?? "5")" : "http"
+            url.host = host; url.port = port
+            url.user = profile["username"] as? String
+            url.password = profile["password"] as? String
+            if let value = url.string { return value }
+        }
+        guard let encoded = try? JSONSerialization.data(withJSONObject: profile, options: [.sortedKeys]),
+              let value = String(data: encoded, encoding: .utf8) else { return "" }
+        return value
+    }
+
+    @objc func onConfigureProxy() {
+        guard let entered = promptText(title: "ClaudeGuard Proxy",
+            prompt: "Enter proxy URL or outbound JSON. Leave empty to remove the profile:", value: currentProxyInput()) else { return }
+        proxySettingsQueue.async {
+            let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            task.arguments = [NSString(string: "~/.local/share/ClaudeGuard/src/helper.py").expandingTildeInPath, "proxy_save"]
+            let input = Pipe(); let errors = Pipe()
+            task.standardInput = input; task.standardError = errors
+            var failureMessage: String?
+            do {
+                try task.run()
+                input.fileHandleForWriting.write(Data(entered.utf8))
+                try input.fileHandleForWriting.close()
+                let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                task.waitUntilExit()
+                if task.terminationStatus != 0 {
+                    failureMessage = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        ?? "Check the proxy URL or JSON profile."
+                }
+            } catch { failureMessage = "Could not save proxy settings. Please try again." }
+            let message = failureMessage
+            DispatchQueue.main.async {
+                if let message = message {
+                    let failure = NSAlert(); failure.messageText = "Proxy settings were not saved"
+                    failure.informativeText = message
+                    failure.runModal()
+                    return
+                }
+                self.loadConfig()
+                self.proxyEnabled = true; self.connectionMode = .proxy; self.proxyError = ""
+                self.currentIP = "…"; self.proxyProfileID = ""
+                self.state = entered.isEmpty && self.protectionEnabled ? .blocked(ip: "Unavailable") : .offline
+                self.saveConfig(); self.writeStateFile(); self.lastAppliedDomainsBlocked = nil
+                self.rebuildMenu(); self.recheckAsync()
+            }
+        }
+    }
+
+    private let proxySettingsQueue = DispatchQueue(label: "com.claudeguard.proxy-settings", qos: .userInitiated)
 
     private func recheckAsync() {
         startBlinking()
@@ -762,30 +1068,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func onChangeModel() {
-        let script = "display dialog \"Enter Claude model ID (e.g. claude-opus-4-8):\" default answer \"\(defaultModel)\" with title \"ClaudeGuard Default Model\""
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let out = String(data: data, encoding: .utf8), out.contains("text returned:") {
-            let parts = out.components(separatedBy: "text returned:")
-            if parts.count > 1 {
-                let raw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                if !raw.isEmpty {
-                    defaultModel = raw
-                    saveConfig()
-                    rebuildMenu()
-                }
-            }
+        guard let entered = promptText(title: "ClaudeGuard Default Model",
+            prompt: "Enter Claude model ID (e.g. claude-opus-4-8):", value: defaultModel), !entered.isEmpty else { return }
+        defaultModel = entered
+        saveConfig(); rebuildMenu()
+    }
+
+    func validWhitelistEntry(_ entry: String) -> Bool {
+        let parts = entry.components(separatedBy: "/")
+        guard parts.count <= 2, !parts[0].isEmpty,
+              parts[0].utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (65...70).contains(byte)
+                      || (97...102).contains(byte) || byte == 46 || byte == 58
+              }) else { return false }
+        // Darwin accepts leading-zero IPv4 octets; Python/root validation does not.
+        if parts[0].contains(".") {
+            let dotted = parts[0].components(separatedBy: ":").last!
+            let octets = dotted.components(separatedBy: ".")
+            guard octets.count == 4, octets.allSatisfy({
+                !$0.isEmpty && ($0.count == 1 || !$0.hasPrefix("0"))
+                    && $0.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
+            }) else { return false }
         }
+        var v4 = in_addr()
+        var v6 = in6_addr()
+        let maxPrefix: Int
+        if inet_pton(AF_INET, parts[0], &v4) == 1 { maxPrefix = 32 }
+        else if inet_pton(AF_INET6, parts[0], &v6) == 1 { maxPrefix = 128 }
+        else { return false }
+        if parts.count == 1 { return true }
+        let prefix = parts[1]
+        return !prefix.isEmpty && prefix.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
+            && Int(prefix).map { $0 <= maxPrefix } == true
     }
 
     @objc func onAddCurrentIP() {
-        if !currentIP.isEmpty, !allowedIPs.contains(currentIP), currentIP != "No Internet", currentIP != "…" {
+        if validWhitelistEntry(currentIP), !allowedIPs.contains(currentIP) {
             allowedIPs.append(currentIP)
             saveConfig()
             recheckAsync()
@@ -793,25 +1111,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func onManageIPs() {
-        let ipsStr = allowedIPs.joined(separator: ", ")
-        let script = "display dialog \"Enter Whitelisted VPN IPs (comma separated):\" default answer \"\(ipsStr)\" with title \"ClaudeGuard IP Whitelist\""
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let out = String(data: data, encoding: .utf8), out.contains("text returned:") {
-            let parts = out.components(separatedBy: "text returned:")
-            if parts.count > 1 {
-                let raw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                allowedIPs = raw.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                saveConfig()
-                recheckAsync()
-            }
+        guard let entered = promptText(title: "ClaudeGuard IP Whitelist",
+            prompt: "Enter Whitelisted VPN IPs (comma separated):", value: allowedIPs.joined(separator: ", ")) else { return }
+        let entries = entered.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] :
+            entered.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard entries.allSatisfy({ validWhitelistEntry($0) }) else {
+            let alert = NSAlert()
+            alert.messageText = "Invalid IP/CIDR"
+            alert.informativeText = "Enter IPv4/IPv6 addresses or CIDR ranges, separated by commas. No changes saved."
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
         }
+        allowedIPs = entries
+        saveConfig(); rebuildMenu(); recheckAsync()
     }
 
     @objc func onQuit() { NSApplication.shared.terminate(nil) }

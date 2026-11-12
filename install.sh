@@ -43,6 +43,19 @@ warn() { printf '%s %s\n' "${YLW}⚠${RST}"   "$*"; }
 die()  { printf '%s %s\n' "${RED}✗${RST}"   "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Replace executed Mach-O files using fresh inodes, avoiding stale macOS
+# code-signature caches on upgrades. $1 is the optional sudo prefix.
+install_native_binary() {
+    local S="$1" source="$2" destination="$3" staged
+    local verification_target="${4:-$3}"
+    staged="$($S mktemp "${destination}.XXXXXX")"
+    $S cp "$source" "$staged"
+    $S chown root:wheel "$staged"
+    $S chmod 755 "$staged"
+    $S mv -f "$staged" "$destination"
+    $S /usr/bin/codesign --verify --strict "$verification_target"
+}
+
 printf '%s\n' "${BOLD}${CYN}"
 cat <<'BANNER'
    ____ _                 _        ____                     _
@@ -51,7 +64,7 @@ cat <<'BANNER'
  | |___| | (_| | |_| | (_| |  __/| |_| | |_| | (_| | | | (_| |
   \____|_|\__,_|\__,_|\__,_|\___| \____|\__,_|\__,_|_|  \__,_|
 BANNER
-printf '%s\n' "        VPN-whitelist guard for Claude on macOS${RST}"
+printf '%s\n' "        ClaudeGuard · VPN whitelist & proxy guard for macOS${RST}"
 printf '\n'
 
 [ "$(uname -s)" = "Darwin" ] || die "ClaudeGuard is macOS-only."
@@ -102,6 +115,8 @@ pkill -f "ClaudeGuardMenuBar" 2>/dev/null || true
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
 info "Installing to ${BOLD}$INSTALL_DIR${RST}"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/src"
+cp "$SOURCE_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
+cp "$SOURCE_DIR/LICENSE" "$SOURCE_DIR/NOTICE" "$INSTALL_DIR/"
 /usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' \
     "$SOURCE_DIR/src/" "$INSTALL_DIR/src/"
 for f in "$SOURCE_DIR/bin/"*; do
@@ -118,8 +133,14 @@ clang -O2 "$SOURCE_DIR/src/hosts_helper.c" -o "$INSTALL_DIR/bin/hosts-helper"
 info "Compiling isolated PF anchor helper (C)…"
 clang -O2 "$SOURCE_DIR/src/pf_anchor.c" -o "$INSTALL_DIR/bin/pf-anchor"
 
+info "Downloading verified sing-box proxy engine…"
+bash "$SOURCE_DIR/scripts/fetch-proxy-engine.sh" "$INSTALL_DIR/bin"
+
 info "Compiling native menu bar app (Swift)…"
-swiftc -O "$SOURCE_DIR/src/main.swift" -o "$INSTALL_DIR/bin/ClaudeGuardMenuBar"
+swiftc -O "$SOURCE_DIR/src/main.swift" "$SOURCE_DIR/src/ModeSegmentedControl.swift" -o "$INSTALL_DIR/bin/ClaudeGuardMenuBar"
+for native in hosts-helper pf-anchor ClaudeGuardMenuBar; do
+    /usr/bin/codesign --force --sign - "$INSTALL_DIR/bin/$native"
+done
 
 chmod +x "$INSTALL_DIR/bin/claudeguard" "$INSTALL_DIR/bin/ClaudeGuardMenuBar" \
          "$INSTALL_DIR/src/cli_wrapper.py" "$INSTALL_DIR/src/app_launcher.py" \
@@ -153,16 +174,23 @@ cat > "$BUILD_APP_BUNDLE/Contents/Info.plist" <<'EOF'
     <key>CFBundleIdentifier</key><string>com.claudeguard.app</string>
     <key>CFBundleName</key><string>ClaudeGuard</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>2.0.0</string>
+    <key>CFBundleVersion</key><string>2.0.0</string>
     <key>LSUIElement</key><true/>
 </dict>
 </plist>
 EOF
 
 cp "$INSTALL_DIR/bin/ClaudeGuardMenuBar" "$BUILD_APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar"
+# A signature made for a standalone executable cannot seal an app's resources.
+# Sign only after Info.plist, icon and executable are all in the final bundle.
+/usr/bin/codesign --force --sign - "$BUILD_APP_BUNDLE"
+/usr/bin/codesign --verify --strict "$BUILD_APP_BUNDLE"
 
 # --- 4. Symlink the manager CLI ---------------------------------------------
 info "Installing the 'claudeguard' manager…"
 mkdir -p "$HOME/.local/bin" "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
 ln -sf "$INSTALL_DIR/bin/claudeguard" "$HOME/.local/bin/claudeguard"
 [ -w "/usr/local/bin" ] && ln -sf "$INSTALL_DIR/bin/claudeguard" "/usr/local/bin/claudeguard"
 
@@ -217,7 +245,9 @@ with open(path) as f:
     config = json.load(f)
 for key in ("block_auto_updates", "update_domains"):
     config.pop(key, None)
-with open(path + ".migration", "w") as f:
+fd = os.open(path + ".migration", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w") as f:
+    os.fchmod(f.fileno(), 0o600)
     json.dump(config, f, indent=2)
 os.replace(path + ".migration", path)
 PYTHON
@@ -227,6 +257,7 @@ rm -f "$INSTALL_DIR/src/update_guard.py"
 info "Installing ${BOLD}$APP_BUNDLE${RST}…"
 sudo /usr/bin/ditto "$BUILD_APP_BUNDLE" "$APP_BUNDLE"
 sudo chown -R root:wheel "$APP_BUNDLE"
+install_native_binary sudo "$BUILD_APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar" "$APP_BUNDLE/Contents/MacOS/ClaudeGuardMenuBar" "$APP_BUNDLE"
 # Remove only the legacy user-app symlink owned by this installer.
 if [ -L "$HOME/Applications/ClaudeGuard.app" ]; then
     legacy_target="$(readlink "$HOME/Applications/ClaudeGuard.app")"
@@ -269,6 +300,9 @@ info "Installing the root network helper (LaunchDaemon — needs your password o
 # Private staging dir + trigger file the helper watches (must exist before load).
 mkdir -p "$CONFIG_DIR/pending"
 chmod 700 "$CONFIG_DIR/pending"
+for secret in "$CONFIG_DIR/pending/proxy.json" "$CONFIG_DIR/pending/proxy.json.new"; do
+    [ ! -f "$secret" ] || chmod 600 "$secret"
+done
 [ -f "$CONFIG_DIR/pending/request" ] || : > "$CONFIG_DIR/pending/request"
 
 HELPER_PLIST_BODY="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -291,12 +325,22 @@ HELPER_PLIST_BODY="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 
 install_root_helper() {   # $1 = sudo prefix ("" when already root)
     local S="$1"
+    $S launchctl bootout system/com.claudeguard.proxy 2>/dev/null || true
     $S launchctl bootout system "$HELPER_PLIST" 2>/dev/null || true
     $S mkdir -p "$HELPER_SYS_DIR"
     $S chmod 755 "$HELPER_SYS_DIR"
-    $S cp "$INSTALL_DIR/bin/hosts-helper" "$HELPER_SYS_DIR/hosts-helper"
-    $S cp "$INSTALL_DIR/bin/pf-anchor" "$HELPER_SYS_DIR/pf-anchor"
+    install_native_binary "$S" "$INSTALL_DIR/bin/hosts-helper" "$HELPER_SYS_DIR/hosts-helper"
+    install_native_binary "$S" "$INSTALL_DIR/bin/pf-anchor" "$HELPER_SYS_DIR/pf-anchor"
     $S cp "$SOURCE_DIR/src/pf_controller.py" "$HELPER_SYS_DIR/pf_controller.py"
+    $S cp "$SOURCE_DIR/src/proxy_config.py" "$SOURCE_DIR/src/proxy_service.py" "$SOURCE_DIR/src/trace_timing.py" "$HELPER_SYS_DIR/"
+    $S cp "$INSTALL_DIR/bin/PROXY-ENGINE-NOTICE.txt" "$HELPER_SYS_DIR/"
+    $S cp "$SOURCE_DIR/src/vendor/SING_BOX_LICENSE" "$HELPER_SYS_DIR/SING_BOX_LICENSE"
+    $S cp "$SOURCE_DIR/LICENSE" "$SOURCE_DIR/NOTICE" "$HELPER_SYS_DIR/"
+    install_native_binary "$S" "$INSTALL_DIR/bin/sing-box" "$HELPER_SYS_DIR/sing-box"
+    $S "$HELPER_SYS_DIR/sing-box" version >/dev/null
+    $S chown root:wheel "$HELPER_SYS_DIR/proxy_config.py" "$HELPER_SYS_DIR/proxy_service.py" "$HELPER_SYS_DIR/trace_timing.py" "$HELPER_SYS_DIR/sing-box"
+    $S chmod 644 "$HELPER_SYS_DIR/proxy_config.py" "$HELPER_SYS_DIR/proxy_service.py" "$HELPER_SYS_DIR/trace_timing.py"
+    $S chmod 755 "$HELPER_SYS_DIR/sing-box"
     $S chown root:wheel "$HELPER_SYS_DIR" "$HELPER_SYS_DIR/hosts-helper" "$HELPER_SYS_DIR/pf_controller.py"
     $S chown root:wheel "$HELPER_SYS_DIR/pf-anchor"
     $S chmod 755 "$HELPER_SYS_DIR/pf-anchor"
@@ -336,6 +380,7 @@ fi
 
 printf '\n%s\n' "${GRN}${BOLD}🎉 ClaudeGuard installed & running.${RST}"
 printf '%s\n' "   Look for the shield in your macOS menu bar."
+printf '%s\n' "   VPN: add your VPN IP. Proxy: choose Configure Proxy… and save a profile."
 printf '%s\n' "   ${DIM}Manage it:${RST} ${BOLD}claudeguard status${RST}  ·  ${BOLD}claudeguard add-ip <IP>${RST}"
 if ! printf '%s' "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
     printf '%s\n' "   ${YLW}Note:${RST} add ~/.local/bin to your PATH to use 'claudeguard' directly:"

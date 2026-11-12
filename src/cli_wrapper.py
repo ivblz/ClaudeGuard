@@ -41,20 +41,14 @@ def handle_signal(signum, frame):
     force_restore_terminal()
     sys.exit(130 if signum == signal.SIGINT else 143)
 
-def print_block_banner(ip, err, verb):
-    current_ip_str = ip if ip else "UNKNOWN/OFFLINE"
-    print(f"\033[91m", file=sys.stderr)
-    print(f"==================================================", file=sys.stderr)
-    print(f" 🚫 [ClaudeGuard] {verb}", file=sys.stderr)
-    print(f"==================================================", file=sys.stderr)
-    print(f" Current Public IP : {current_ip_str}", file=sys.stderr)
-    print(f" Status            : NOT IN WHITELISTED VPN LIST", file=sys.stderr)
-    if err:
-        print(f" Error Details     : {err}", file=sys.stderr)
-    print(f"--------------------------------------------------", file=sys.stderr)
-    print(f" Execution aborted to prevent Anthropic region flag.", file=sys.stderr)
-    print(f" Add IP to whitelist: claudeguard add-ip {current_ip_str}", file=sys.stderr)
-    print(f"\033[0m", file=sys.stderr)
+def print_block_banner(ip, err, verb, mode="vpn"):
+    if mode == "proxy":
+        reason = "Proxy unavailable; check Configure Proxy."
+    elif not ip or err:
+        reason = "VPN IP could not be verified; check your connection."
+    else:
+        reason = "IP not whitelisted; check your VPN or IP Whitelist."
+    print(f"\033[91m[ClaudeGuard] Blocked: {reason}\033[0m", file=sys.stderr)
 
 def main():
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
@@ -71,10 +65,9 @@ def main():
 
     # Restore the terminal BEFORE printing: force_restore_terminal() flips the
     # screen buffer, so printing first would wipe the message we just wrote.
-    if not config.allowed_ips:
+    if config.config.get("connection_mode", "vpn") == "vpn" and not config.allowed_ips:
         force_restore_terminal()
-        print("\033[91m[ClaudeGuard] 🚫 BLOCK ERROR: No allowed VPN IPs configured in whitelist.\033[0m", file=sys.stderr)
-        print("Run 'claudeguard add-ip <YOUR_VPN_IP>' to configure access.", file=sys.stderr)
+        print("\033[91m[ClaudeGuard] Blocked: IP whitelist is empty; add your VPN IP.\033[0m", file=sys.stderr)
         sys.exit(1)
 
     # Fail closed: only a confirmed "allowed" launches.
@@ -82,9 +75,9 @@ def main():
     if verdict != "allowed":
         force_restore_terminal()
         if verdict == "offline":
-            print_block_banner(ip, err or "No internet connection — IP can't be verified.", "ACCESS DENIED: CLAUDE CLI BLOCKED")
+            print_block_banner(ip, err or "No internet connection — IP can't be verified.", "ACCESS DENIED: CLAUDE CLI BLOCKED", mode=config.config.get("connection_mode", "vpn"))
         else:
-            print_block_banner(ip, err, "ACCESS DENIED: CLAUDE CLI BLOCKED")
+            print_block_banner(ip, err, "ACCESS DENIED: CLAUDE CLI BLOCKED", mode=config.config.get("connection_mode", "vpn"))
         sys.exit(1)
 
     # We're hooked on *this* PATH entry, but a reinstall may have taken over the
@@ -94,10 +87,12 @@ def main():
     except Exception:
         pass
 
-    ok, message = sync_hosts_file(block_claude_domains=False, config=config)
+    # Proxy's allowed verdict requires a fresh daemon verification. Reapplying
+    # its routes here can restart the engine and interrupt other CLI sessions.
+    ok, message = (True, "") if config.config.get("connection_mode") == "proxy" else sync_hosts_file(block_claude_domains=False, config=config)
     if not ok:
         force_restore_terminal()
-        print_block_banner(ip, message, "NETWORK PROTECTION ERROR")
+        print_block_banner(ip, message, "NETWORK PROTECTION ERROR", mode=config.config.get("connection_mode", "vpn"))
         sys.exit(1)
     run_real_claude(config)
 
@@ -153,6 +148,9 @@ def run_real_claude(config):
         sys.exit(1)
 
     env = os.environ.copy()
+    if config.protection_enabled and config.config.get("connection_mode") == "proxy":
+        from src.proxy import environment
+        env = environment(env)
     if config.model_override_enabled and config.default_model and "--model" not in sys.argv:
         args = [real_path, "--model", config.default_model] + sys.argv[1:]
     else:
@@ -192,8 +190,8 @@ def run_real_claude(config):
         if verdict == "blocked":
             banner_ip, banner_err = ip, err
 
-    if banner_ip is not None:
-        print_block_banner(banner_ip, banner_err, "CLAUDE CLI BLOCKED — IP NOT IN WHITELIST")
+    if block_info["blocked"] or banner_ip is not None:
+        print_block_banner(banner_ip, banner_err, "CLAUDE CLI BLOCKED", mode=config.config.get("connection_mode", "vpn"))
         sys.exit(1)
 
     sys.exit(rc)

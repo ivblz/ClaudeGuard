@@ -49,36 +49,45 @@ if ! sudo /usr/bin/python3 -I "$PF_BACKEND" --unblock; then
     echo "PF cleanup failed; installation files and token were kept. Resolve the reported error and retry."
     exit 1
 fi
-rm -f "$PLIST_PATH"
-sudo rm -f "$HELPER_PLIST" 2>/dev/null || true
-sudo rm -rf "$HELPER_SYS_DIR" 2>/dev/null || true
-
 # 3. Restore /etc/hosts file
 echo "--> Restoring /etc/hosts and DNS settings..."
-python3 -c "
-import os, subprocess
+HOSTS_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/claudeguard-uninstall.XXXXXX") || exit 1
+trap 'rm -rf -- "$HOSTS_TMP_DIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if ! python3 - "$HOSTS_TMP_DIR/hosts" <<'PYTHON'
+import os, sys
 HOSTS_PATH = '/etc/hosts'
-if os.path.exists(HOSTS_PATH):
-    try:
-        with open(HOSTS_PATH, 'r') as f: content = f.read()
-        for header, footer in [
-            ('# BEGIN CLAUDEGUARD BLOCKS\n', '# END CLAUDEGUARD BLOCKS\n'),
-            ('# BEGIN CLAUDEGUARD UPDATE BLOCKS\n', '# END CLAUDEGUARD UPDATE BLOCKS\n')
-        ]:
-            while header in content and footer in content:
-                start = content.find(header)
-                end = content.find(footer) + len(footer)
-                content = content[:start] + content[end:]
-        tmp = '/tmp/claudeguard_clean_hosts.tmp'
-        with open(tmp, 'w') as f: f.write(content)
-        cmd = f'sudo cp {tmp} {HOSTS_PATH} && rm -f {tmp}'
-        subprocess.run(cmd, shell=True, capture_output=True)
-    except: pass
-" 2>/dev/null || true
-
+with open(HOSTS_PATH, 'r') as f:
+    content = f.read()
+for header, footer in [
+    ('# BEGIN CLAUDEGUARD BLOCKS\n', '# END CLAUDEGUARD BLOCKS\n'),
+    ('# BEGIN CLAUDEGUARD UPDATE BLOCKS\n', '# END CLAUDEGUARD UPDATE BLOCKS\n')
+]:
+    while header in content:
+        start = content.index(header)
+        end = content.find(footer, start + len(header))
+        if end < 0:
+            raise ValueError('Unterminated ClaudeGuard hosts block; refusing to rewrite hosts')
+        content = content[:start] + content[end + len(footer):]
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, 'w') as f:
+    f.write(content)
+PYTHON
+then
+    echo "Hosts cleanup failed; installation files were kept. Resolve the error and retry." >&2
+    exit 1
+fi
+if ! sudo cp "$HOSTS_TMP_DIR/hosts" /etc/hosts; then
+    echo "Cannot restore /etc/hosts; installation files were kept. Resolve the error and retry." >&2
+    exit 1
+fi
 # Flush DNS
-dscacheutil -flushcache 2>/dev/null || true
-sudo killall -HUP mDNSResponder 2>/dev/null || true
+dscacheutil -flushcache || { echo "DNS cache flush failed; retry uninstall." >&2; exit 1; }
+sudo killall -HUP mDNSResponder || { echo "DNS reload failed; retry uninstall." >&2; exit 1; }
+rm -f "$PLIST_PATH" || exit 1
+sudo rm -f "$HELPER_PLIST" || exit 1
+sudo rm -rf "$HELPER_SYS_DIR" || exit 1
 
 # 4. Unlock auto-update folders
 # Globbed: a stale literal bundle id silently unlocks nothing and would leave the
@@ -116,13 +125,19 @@ if [ -n "$REAL_CLAUDE_TARGET" ] && [ -f "$REAL_CLAUDE_TARGET" ]; then
         /usr/local/*)    RESTORE_DIR="/usr/local/bin" ;;
         *)               RESTORE_DIR="$HOME/.local/bin" ;;
     esac
-    if [ -d "$RESTORE_DIR" ] && [ -w "$RESTORE_DIR" ] && [ ! -e "$RESTORE_DIR/claude" ]; then
-        ln -sf "$REAL_CLAUDE_TARGET" "$RESTORE_DIR/claude"
+    if [ -e "$RESTORE_DIR/claude" ] || [ -L "$RESTORE_DIR/claude" ]; then
+        echo "    Existing claude command left unchanged."
+    elif [ ! -d "$RESTORE_DIR" ] || [ ! -w "$RESTORE_DIR" ]; then
+        echo "Error: Cannot restore the claude command: destination directory is missing or not writable." >&2
+        exit 1
+    elif ln -s "$REAL_CLAUDE_TARGET" "$RESTORE_DIR/claude"; then
         echo "    Restored $RESTORE_DIR/claude -> $REAL_CLAUDE_TARGET"
+    else
+        echo "Error: Could not restore the claude command. Resolve the error and retry uninstall." >&2
+        exit 1
     fi
 else
-    echo "    ⚠️  Could not determine the original claude CLI path; nothing restored."
-    echo "       Reinstall Claude Code (e.g. 'brew reinstall --cask claude-code') if 'claude' now points nowhere."
+    echo "    Saved Claude CLI binary is unavailable; command restoration skipped."
 fi
 
 # Remove the shared application and any legacy installer-created user link.

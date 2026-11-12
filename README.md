@@ -2,188 +2,135 @@
 
 # 🛡️ ClaudeGuard
 
-**A VPN-whitelist guard for Claude on macOS.**
+**VPN whitelist and proxy routing for Claude on macOS.**
 
-Blocks the **Claude Desktop** app, the **Claude Code CLI** (`claude`) and every Claude/Anthropic domain (`claude.ai`, `claude.com`, `anthropic.com` and all their subdomains) whenever your public IP is not on your VPN whitelist - so you never touch Claude from the wrong region by accident.
+Protect Claude Code CLI, Claude Desktop and known Claude/Anthropic destinations using a verified VPN IP or your own proxy.
 
 **English** · [Русский](README.ru.md)
 
-<br>
+<img src="photos/vpn_ok.png" width="290" alt="VPN mode">
+<img src="photos/proxy_ok.png" width="290" alt="Proxy mode">
 
-<img src="photos/vpn_ok.png" width="190" alt="Protected (VPN OK)">
-<img src="photos/blocked.png" width="190" alt="Blocked">
-<img src="photos/disable.png" width="190" alt="Protection Disabled">
-<img src="photos/offline.png" width="190" alt="Offline (no connection)">
-<br>
-
-<img src="photos/ip_whitelist.png" width="350" alt="IP Whitelist">
-<img src="photos/add_model.png" width="350" alt="Default Model">
+IP addresses and proxy endpoints in these screenshots are redacted.
 
 </div>
 
----
-
-## Why
-
-If your account is region-sensitive, a single request from the wrong IP can get your account flagged.
-ClaudeGuard solves that: every launch and every running session is checked against your whitelist of allowed IPs, and access is cut the instant you fall off it.
-
 ## Features
 
-- 🔐 **IP whitelist** - Claude opens **only** when your public IP matches one of your VPN nodes.
-- ⏱ **Instant pre-flight check** - launching `claude` or `Claude.app` verifies the public IP in < 0.5s (STUN over UDP). Not whitelisted → blocked before anything connects.
-- 🧠 **One brain, one verdict** - a background daemon publishes the decision to a state file; the CLI, the app launcher and the menu bar all read the same verdict, so nothing can disagree.
-- 🚀 **Autostart at login** via `LaunchAgent`.
-- 🟢 **Menu bar UI** - live status (🟢 protected / 🔴 blocked / ⚪ offline / 🟡 off), toggles, one-click whitelist.
-- 🤖 **Default model override** - pin a model for every `claude` session (e.g. `claude-opus-4-8`) from the menu bar; the CLI wrapper injects `--model` automatically so you don't have to type it each time.
+- **VPN mode:** an IPv4/IPv6 address or CIDR whitelist; the network guard verifies the VPN route and IPv4 exit before allowing protected destinations through that tunnel. IPv6 has no separate VPN verification and stays blocked for protected destinations.
+- **Proxy mode:** HTTP/HTTPS, SOCKS4/4a/5, Shadowsocks, VMess, VLESS/Reality, Trojan, Hysteria2 and TUIC through sing-box. Advanced protocols and transports use an outbound JSON profile.
+- **Menu bar controls:** live status, VPN/Proxy selector, protection toggle, whitelist and proxy settings. The shield appears at startup; mode switching has no trackpad haptic feedback.
+- **Native settings windows:** copy/paste, current proxy prefilled and selected, and profile removal by saving an empty field. An empty whitelist or missing proxy profile blocks access in the selected mode.
+- **Claude Code integration:** launch checks, monitoring of running sessions and an optional default `--model` override.
+- **Login startup and hook repair:** the daemon periodically checks Claude CLI/Desktop hooks. `doctor` checks and repairs them on demand.
 
 ## Install
 
-### PKG installer
+### PKG
 
-1. Download `ClaudeGuard.pkg` from the [GitHub Releases](https://github.com/ivblz/ClaudeGuard/releases) assets and open it.
-2. Follow the installer and enter an administrator password when prompted.
-3. Connect to your VPN, click the shield in the menu bar, and add your VPN IP through **Manage Whitelisted IPs…**. On first installation, access to Claude stays blocked until you add an allowed IP.
+1. Download `ClaudeGuard.pkg` from [Releases](https://github.com/ivblz/ClaudeGuard/releases), open it and follow the installer.
+2. Use the account that will run ClaudeGuard; installation requires administrator privileges.
+3. Find the shield in the menu bar and choose a mode:
+   - **VPN:** connect to your VPN and add its public IP through **Manage Whitelisted IPs…**. Do not whitelist your ordinary connection by mistake.
+   - **Proxy:** choose **Configure Proxy…** and save your proxy URL or outbound JSON.
 
-The package includes Apple Silicon and Intel binaries and requires **macOS 14 or later**. **Xcode Command Line Tools are still required for Python 3**; if missing, run `xcode-select --install` in Terminal, wait for it to finish, and reopen the installer. Existing settings are preserved when upgrading.
+The package targets **macOS 14+**, includes **Apple Silicon and Intel** executables, and bundles **sing-box 1.14.4**. Installing the PKG does not download the engine. **Xcode Command Line Tools are required for `/usr/bin/python3`**; if missing, run `xcode-select --install` and finish that installation first. Existing configuration is preserved on upgrade. A fresh installation starts with an empty whitelist and no proxy profile.
 
-The current package is unsigned and not notarized. If macOS blocks a package you trust, allow it in **System Settings → Privacy & Security → Open Anyway**.
+By default the app and helpers are ad hoc signed; the PKG has no Developer ID signature or notarization. macOS may require **System Settings → Privacy & Security → Open Anyway** for a downloaded package you trust.
 
-### Build from source
+### Source installation
 
-The installer compiles the native binaries (Swift + C) **on your machine**. Locally-compiled binaries
-carry no quarantine flag, so **Gatekeeper never blocks them** - no Apple Developer account, no code-signing,
-no notarization, no Homebrew. The only requirement is Xcode Command Line Tools (the installer offers to
-install them if missing).
-
-Choose either source installation method:
-
-**Option 1 - one line** (downloads and builds from GitHub):
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/install.sh)"
-```
-
-**Option 2 - from a local copy** (a cloned or downloaded repo; never touches GitHub):
+From a local checkout:
 
 ```bash
 ./install.sh
 ```
 
-Either way it compiles for your architecture (Apple Silicon or Intel), installs the menu bar daemon at login,
-and wraps the `claude` command. It asks for your password once (`sudo` is needed to edit `/etc/hosts` and pf)
-and offers to whitelist your current IP - accept **only if you are on your VPN right now.**
+Or download the installer and source from GitHub:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/install.sh)"
+```
+
+The source installer compiles Swift/C for the current Mac and downloads the SHA-256-pinned engine from GitHub. Internet access and Command Line Tools are required. Administrator privileges are used for the application and network helper. The optional current-IP prompt is for VPN setup only; Proxy can be configured afterward from the menu.
+
+### Build a PKG
+
+```bash
+./build.sh
+# Optional version override:
+./build.sh 2.0.1
+```
+
+Output: `ClaudeGuard.pkg` in the project root. The default package version is **2.0.0**. Each build downloads both pinned engine architectures, combines them and includes the engine, licenses and installer scripts in the package. Building does not install the app or change the firewall. See [packaging details](packaging/README.md) for signing and compatibility limits.
 
 ### Uninstall
 
-After a PKG installation:
-
 ```bash
+claudeguard uninstall
+# Or, if the manager is unavailable:
 bash ~/.local/share/ClaudeGuard/uninstall.sh
 ```
 
-From a local source checkout:
-
-```bash
-./uninstall.sh
-```
-
-The app is installed at `/Applications/ClaudeGuard.app`. Supporting Python files live in `~/.local/share/ClaudeGuard`, and settings in `~/.config/claudeguard`.
+From a complete checkout, `./uninstall.sh` also works. Uninstallation requires administrator privileges, stops ClaudeGuard services, removes its PF anchor and hosts sections, and removes its CLI hooks. Existing unrelated `claude` commands are preserved. A saved original CLI binary is linked back only if it still exists; Claude itself is not installed or downloaded.
 
 ## CLI
 
-After install the `claudeguard` command is available:
-
-| Command | What it does |
+| Command | Action |
 |---|---|
-| `claudeguard status` | Current status, IP and whitelist |
-| `claudeguard add-ip <ip>` | Add an IP or CIDR to the whitelist |
-| `claudeguard remove-ip <ip>` | Remove an IP from the whitelist |
-| `claudeguard list-ips` | List whitelisted IPs |
-| `claudeguard enable-protection` / `disable-protection` | Turn protection on / off |
-| `claudeguard set-model <model>` | Set the default model (e.g. `claude-opus-4-8`) |
-| `claudeguard enable-model` / `disable-model` | Turn the model override on / off |
-| `claudeguard launch-desktop` | Launch Claude Desktop with a pre-flight check |
-| `claudeguard start` / `stop` | Start / stop the menu bar daemon |
-| `claudeguard doctor` | Check every hook is still attached, and re-attach it |
-| `claudeguard set-cli-path <path>` | Point at the real `claude` binary if auto-detect misses it |
+| `claudeguard status` / `check` | Show status / return exit code 0 if access is allowed, otherwise 1 |
+| `claudeguard add-ip <ip-or-cidr>` | Validate and add a whitelist entry |
+| `claudeguard remove-ip <entry>` / `list-ips` | Remove an exact entry / list entries |
+| `claudeguard set-proxy` | Read one proxy URL or outbound JSON from stdin; empty input removes it |
+| `claudeguard use-proxy` / `use-vpn` | Select connection mode |
+| `claudeguard enable-protection` / `disable-protection` | Enable / disable protection |
+| `claudeguard set-model <model>` | Set and enable the CLI default model override |
+| `claudeguard enable-model` / `disable-model` | Enable / disable that override |
+| `claudeguard launch-desktop` | Launch Claude Desktop through a preflight check |
+| `claudeguard start` / `stop` | Start / stop the menu bar daemon; stopping it is not firewall cleanup |
+| `claudeguard doctor` | Check and repair CLI/Desktop hooks |
+| `claudeguard install-cli-wrapper` | Repair the CLI hook |
+| `claudeguard set-cli-path <path>` | Set the real Claude CLI executable |
+| `claudeguard uninstall` | Run the uninstaller |
 
-### Surviving Claude reinstalls
+Use `claudeguard set-proxy` interactively, paste the profile and finish input with Ctrl+D. Do not put real passwords into shell history or committed examples.
 
-Reinstalling Claude Code puts the real `claude` binary back over ClaudeGuard's shim,
-and updating it deletes the version-stamped path the shim hands off to - so the guard
-would silently detach while the menu bar still showed 🟢. The same applies to Claude
-Desktop, whose bundle id and update directories have been renamed before.
+## Network protection and limits
 
-ClaudeGuard therefore discovers those locations instead of hard-coding them, and
-re-attaches whatever came loose: the daemon self-heals **every 60s**, the `claude`
-wrapper re-hooks on each run, and `/etc/hosts` is re-applied whenever something
-external edits it. Run `claudeguard doctor` to see the state of every hook (and fix
-it immediately) at any time.
+The user daemon publishes `allowed`, `blocked`, `offline` or `disabled` in `~/.config/claudeguard/state.json`. Launch checks use this verdict; VPN mode can fall back to its own IP check. Process shutdown follows periodic checks and is not instantaneous.
 
-## How it works
+The root helper manages a private `com.claudeguard` PF anchor and its own PF enable token. It does not globally disable PF or flush every connection. Changes remove connection states for protected destinations. VPN allow rules bind states to the verified `utun` interface. DNS queries for A/AAAA run concurrently with fallback resolvers and a 2.5-second overall deadline; there is no warm DNS cache.
 
-1. **STUN-first IP detection** - the public IP is resolved via a single UDP STUN round-trip (tens of ms), falling back to HTTP echo services on networks that block UDP.
-2. **The brain** (`src/brain.py`) turns that IP into one verdict - `allowed` / `blocked` / `offline` - and it **fails closed**: only a confirmed `allowed` lets Claude run.
-3. **Single source of truth** - the menu bar daemon writes its verdict to `~/.config/claudeguard/state.json` on every check. The CLI wrapper and app launcher read it (instant), and fall back to their own check only if the daemon is down.
-4. **Enforcement** - the whole Claude/Anthropic domain family (~175 hosts across 5 apex domains) is blocked via `/etc/hosts` + a pf firewall rule (TCP + UDP/QUIC); the desktop app is force-quit with an alert; a running `claude` session is killed the moment the IP leaves the whitelist.
+Proxy mode creates a dedicated `utun199` and a local CLI bridge at `127.0.0.1:17943`. It routes known Claude destinations while preserving the system proxy settings and default route. A broader VPN route can carry the upstream connection. Exact route conflicts or an occupied TUN cause an error. Known Claude QUIC traffic is rejected to encourage TCP fallback. Ordinary-user direct traffic to protected IPs is blocked outside the TUN; the normal Proxy rule exempts root traffic for the engine.
 
-> **Scope:** this is accidental-leak protection for your own machine, not a defense against a malicious admin. The truly unbypassable layer (a Network Extension content filter) requires a paid Apple Developer account; the on-device approach here is the free ceiling and covers accidental leaks well.
+VPN mode removes legacy hosts poisoning after PF is installed. On a configured proxy startup failure, the backend attempts a full PF denial before cleaning hosts. Hosts fallback remains when PF fails or the denial path lacks the resolved destination set. Some helper failure paths can reapply that fallback.
 
-### Coexisting with other PF users
+**Coverage is limited to known/resolved destinations.** Unknown domains, DNS changes, shared CDNs, ECH and separate browser proxies need additional testing. A browser using another remote proxy can bypass destination routing. Shared-IP blocks can affect unrelated sites. This is not a system-wide Network Extension filter or a guarantee that no request can escape. The private macOS PF ABI and physical Intel compatibility also need testing on each supported environment.
 
-Rules and the address table live in the private `com.claudeguard` anchor.
-ClaudeGuard acquires its own PF enable token (`-E`) and releases only that token (`-X`)
-on unblock/uninstall. It never globally disables PF or flushes all connection states.
-Existing TCP/QUIC states are removed only for blocked destination IPs. Built-in domains
-are restricted to Anthropic's dedicated ranges; explicitly added custom domains may use
-shared IPs, so blocking those addresses affects all connections to them.
+The engine is supervised by launchd. Use **Protection Active** to control protection; quitting or stopping the menu app alone does not remove installed network rules. Model override applies to Claude Code, not the website or Desktop.
 
-Upgrade with `./install.sh`; updating user-side Python alone does not update the root-owned
-backend. The installer starts the user daemon only after installing the matching root helper.
-The native `pf-anchor` helper inserts/removes only ClaudeGuard's labelled root call,
-using ticket-checked single-rule operations. It also works when Internet Sharing replaces
-the default `com.apple/*` entry with its own anchors. No root ruleset reload is used.
-The exact legacy ClaudeGuard ruleset is migrated; ambiguous mixed legacy/foreign rules
-are rejected rather than rewritten. The private macOS PF ABI is checked by reading rules
-before mutation; an incompatible kernel produces an error without a global-reload fallback.
+## Files, privacy and diagnostics
 
-The menu retains its original four IP/protection states. Enforcement errors are logged,
-retried and propagated to launch checks, without an extra menu state. Active blocks are
-refreshed every 60 seconds. Hosts blocking remains in place on PF failure. Logs:
-`/tmp/claudeguard.err` and `/tmp/claudeguard-helper.err`.
+- App: `/Applications/ClaudeGuard.app`.
+- User runtime: `~/.local/share/ClaudeGuard`.
+- Configuration: `~/.config/claudeguard/config.json`; proxy credentials are plaintext, not Keychain. The config and private staging files use `0600`; their directories use `0700`.
+- Root runtime: `/Library/Application Support/ClaudeGuard`; generated engine configuration contains credentials with `0600` permissions and can remain after stopping the engine.
+- Logs: `/tmp/claudeguard.err`, `/tmp/claudeguard-helper.err` and the root-only engine log `/Library/Application Support/ClaudeGuard/proxy.log`.
+- Optional timing: set `"trace": true` in the config or `CLAUDEGUARD_TRACE=1` in the relevant process environment. Output: `~/.config/claudeguard/trace.log`. Traces use masked host labels and omit IPs and proxy credentials; tracing is off by default.
 
-## Project structure
+## Development
 
+```bash
+python3 -B -m unittest discover -s tests
+python3 -B tests/check_menu_mode.py
+# Optional local engine integration test:
+CLAUDEGUARD_TEST_ENGINE=/path/to/sing-box python3 -B -m unittest discover -s tests
 ```
-src/
-  brain.py          The single decision core (reads the daemon verdict; STUN fallback)
-  ip_checker.py     Public-IP detection: STUN over UDP, then HTTP
-  config.py         Config at ~/.config/claudeguard/config.json
-  network_guard.py  Stages hosts/PF block and unblock requests for the root helper
-  integrity.py      Finds Claude's real paths; re-attaches hooks after a reinstall
-  cli_wrapper.py    Pre-flight interceptor for the `claude` command
-  app_launcher.py   Pre-flight interceptor for Claude.app
-  helper.py         Python bridge for menu bar actions: network sync and hook repair
-  main.swift        Native menu bar daemon (AppKit): monitoring, alerts, state file
-  hosts_helper.c    LaunchDaemon entry point; runs the root-owned Python backend in isolated mode
-  pf_controller.py  Root-owned backend: private PF anchor/token, request acknowledgements, hosts merge
-  pf_anchor.c       Ticket-checked insertion/removal of only our labelled root anchor call
-  vendor/
-    pf_abi.h        Extracted Apple PF ABI definitions used by the native anchor helper
-    APPLE_LICENSE   License for the extracted Apple code
-    README.md       Source attribution and ABI notes
-bin/claudeguard     Management CLI
-assets/AppIcon.png  App icon
-photos/            README screenshots
-install.sh          Compiles natively on-device and installs everything
-uninstall.sh        Clean removal, restores the original `claude`
-README.md           English documentation
-README.ru.md        Russian documentation
-LICENSE             Project license
-```
+
+Unit tests mostly use mocks or temporary files; they do not prove live PF/TUN enforcement. Manual live tests under `tests/` are opt-in and may change the machine; read them before running. Generated local proxy profiles, credentials and package artifacts are excluded from Git. See [local proxy lab](tests/local-proxy-lab/README.md).
+
+Main components: `src/main.swift` and `ModeSegmentedControl.swift` (UI), `brain.py` (verdict), `config.py`, `ip_checker.py`, `network_guard.py` (staging/DNS), `pf_controller.py` and `pf_anchor.c` (PF), `proxy*.py` (profiles/engine), `integrity.py` (hooks), `cli_wrapper.py`, `app_launcher.py`, and `bin/claudeguard`. Root-owned components must be updated through an installer, not by copying only user-side Python files.
 
 ## License
 
-MIT - see [LICENSE](LICENSE). The extracted Apple PF ABI definitions in `src/vendor/pf_abi.h`
-retain their upstream notices and [Apple Public Source License](src/vendor/APPLE_LICENSE).
+ClaudeGuard uses **GPL-3.0-or-later**; see [LICENSE](LICENSE) and [NOTICE](NOTICE). sing-box **v1.14.4** retains its [upstream license](src/vendor/SING_BOX_LICENSE), including its additional naming/association condition: [source](https://github.com/SagerNet/sing-box/tree/v1.14.4), [source archive](https://github.com/SagerNet/sing-box/archive/refs/tags/v1.14.4.tar.gz). Full license text and notices are included in both installers. Apple PF definitions retain their [Apple Public Source License](src/vendor/APPLE_LICENSE).

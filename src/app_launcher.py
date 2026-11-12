@@ -17,7 +17,7 @@ def launch_claude_desktop():
         open_real_app(config)
         return
 
-    if not config.allowed_ips:
+    if config.config.get("connection_mode", "vpn") == "vpn" and not config.allowed_ips:
         show_mac_alert(
             "ClaudeGuard Protection 🚫",
             "Access to Claude Desktop blocked.\n\nReason: No allowed VPN IPs configured in whitelist.\n\nUse 'claudeguard add-ip <IP>' to configure."
@@ -43,7 +43,7 @@ def launch_claude_desktop():
         sys.exit(1)
 
     # IP is valid! Unblock domain and start app
-    ok, message = sync_hosts_file(block_claude_domains=False, config=config)
+    ok, message = (True, "") if config.config.get("connection_mode") == "proxy" else sync_hosts_file(block_claude_domains=False, config=config)
     if not ok:
         print(message, file=sys.stderr)
         show_mac_alert("ClaudeGuard Error", "Network protection could not be updated. See the helper logs.")
@@ -65,8 +65,8 @@ def open_real_app(config):
         show_mac_alert("ClaudeGuard Error", "Claude Desktop app not found. Run 'claudeguard doctor'.")
 
 def show_mac_alert(title, message):
-    script = f'display alert "{title}" message "{message}" as critical'
-    subprocess.run(["osascript", "-e", script], check=False)
+    script = 'on run argv\n    display alert (item 1 of argv) message (item 2 of argv) as critical\nend run'
+    subprocess.run(["osascript", "-e", script, "--", title, message], check=False)
 
 if __name__ == "__main__":
     launch_claude_desktop()

@@ -15,12 +15,14 @@ from src.network_guard import sync_hosts_file
 
 def print_help():
     help_text = """
-ClaudeGuard CLI - VPN Whitelist Protection for Claude
+ClaudeGuard CLI - VPN whitelist and proxy protection for Claude
 
 Usage:
   claudeguard <command> [options]
 
 Commands:
+  set-proxy            Read a proxy URL or outbound JSON from stdin
+  use-proxy / use-vpn  Select connection mode
   status               Display current status, active IP, and whitelist
   check                Run instant pre-flight IP check (Exit code 0=Allowed, 1=Blocked)
   add-ip <ip>          Add an IP or CIDR range to whitelist
@@ -47,11 +49,31 @@ def main():
         sys.exit(0)
 
     cmd = sys.argv[1].lower()
+    if cmd == "uninstall":
+        script = os.path.join(PROJECT_DIR, "uninstall.sh")
+        if not os.path.isfile(script):
+            print("Error: uninstall.sh is missing. Use a complete ClaudeGuard installation.", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(subprocess.run(["/bin/bash", script], check=False).returncode)
     config = ConfigManager()
 
-    if cmd == "status":
+    if cmd == "set-proxy":
+        from src.proxy import save_profile
+        try:
+            save_profile(config, sys.stdin.read(65537))
+        except Exception:
+            print("Invalid proxy URL or outbound JSON", file=sys.stderr)
+            sys.exit(1)
+        print("Proxy saved. Run claudeguard use-proxy to connect.")
+    elif cmd in ("use-proxy", "use-vpn"):
+        config.config['connection_mode'] = 'proxy' if cmd == 'use-proxy' else 'vpn'
+        config.config['proxy_enabled'] = True
+        config.save_config()
+        print("Connection mode saved; the daemon will apply it on its next check.")
+    elif cmd == "status":
         print("=== ClaudeGuard Status ===")
         print(f"Protection Enabled : {config.protection_enabled}")
+        print("Connection Mode    : " + config.config.get("connection_mode", "vpn"))
         if config.model_override_enabled:
             print(f"Default Model      : {config.default_model}")
         else:
@@ -70,11 +92,11 @@ def main():
         if not config.protection_enabled:
             print("Access Status      : 🟡 DISABLED (protection off)")
         elif verdict == "allowed":
-            print("Access Status      : 🟢 ALLOWED (IP matches Whitelist)")
+            print("Access Status      : 🟢 ALLOWED (active mode verified)")
         elif verdict == "offline":
             print("Access Status      : ⚪ OFFLINE (IP can't be verified)")
         else:
-            print("Access Status      : 🔴 BLOCKED (IP not in Whitelist)")
+            print("Access Status      : 🔴 BLOCKED (active mode not verified)")
         if err:
             print(f"Error Details      : {err}")
 
@@ -89,7 +111,11 @@ def main():
             print("Error: Specify IP to add. Example: claudeguard add-ip 1.2.3.4")
             sys.exit(1)
         ip = sys.argv[2]
-        config.add_ip(ip)
+        try:
+            config.add_ip(ip)
+        except ValueError as error:
+            print(f"Error: {error}", file=sys.stderr)
+            sys.exit(1)
         print(f"✅ Added '{ip}' to allowed whitelist.")
 
     elif cmd in ("remove-ip", "rm-ip", "remove"):

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "http",
+    "port": 18100,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "https",
+    "port": 18101,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "socks4",
+    "port": 18102,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "socks4a",
+    "port": 18103,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "socks5",
+    "port": 18104,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "shadowsocks",
+    "port": 18105,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "vmess",
+    "port": 18106,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "vless",
+    "port": 18107,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "trojan",
+    "port": 18108,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "hysteria2",
+    "port": 18109,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "tuic",
+    "port": 18110,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  },
+  {
+    "name": "vless-tls",
+    "port": 18111,
+    "ok": true,
+    "error": "",
+    "endpoint": "https://api.ipify.org"
+  }
+]

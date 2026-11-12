@@ -51,8 +51,20 @@ def get_verdict(config, timeout=2.0, allow_fallback=True):
     if not config.protection_enabled:
         return "allowed", None, None
 
+    if config.config.get("connection_mode", "vpn") == "proxy":
+        if not config.config.get("proxy_profile"):
+            return "blocked", None, "Proxy is not configured"
+        from src.proxy import profile_id
+        st = read_daemon_state(max_age=90)
+        if (not st or st.get("mode") != "proxy" or st.get("proxy_profile_id") != profile_id(config)
+                or not config.config.get("proxy_enabled", True)):
+            return "blocked", None, "Proxy is disconnected or not verified"
+        if st.get("enforcement_error") or st.get("state") != "allowed":
+            return "blocked", st.get("ip"), st.get("enforcement_error") or "Proxy unavailable"
+        return "allowed", st.get("ip"), None
+
     st = read_daemon_state()
-    if st is not None:
+    if st is not None and st.get("mode", "vpn") == "vpn":
         if st.get("enforcement_error"):
             verdict = "blocked" if st.get("state") == "blocked" else "offline"
             return verdict, st.get("ip"), st["enforcement_error"]

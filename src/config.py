@@ -1,11 +1,34 @@
 import json
+import ipaddress
 import os
 import sys
 
 CONFIG_DIR = os.path.expanduser("~/.config/claudeguard")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
+
+def validate_whitelist_entry(value):
+    value = value.strip()
+    parts = value.split('/')
+    try:
+        if len(parts) > 2 or '%' in parts[0]:
+            raise ValueError
+        address = ipaddress.ip_address(parts[0])
+        if len(parts) == 2:
+            prefix = parts[1]
+            if not prefix or any(c not in '0123456789' for c in prefix):
+                raise ValueError
+            if not 0 <= int(prefix) <= address.max_prefixlen:
+                raise ValueError
+            ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        raise ValueError('Invalid IP/CIDR. Use an IPv4/IPv6 address or CIDR prefix.') from None
+    return value
+
 DEFAULT_CONFIG = {
+    "connection_mode": "vpn",
+    "proxy_enabled": True,
+    "proxy_profile": None,
     "allowed_ips": [],
     "protection_enabled": True,
     "model_override_enabled": False,
@@ -40,10 +63,12 @@ class ConfigManager:
         self.config = self.load_config()
 
     def load_config(self):
+        self.ensure_dir()
         if not os.path.exists(self.path):
             self.ensure_dir()
             self.save_config(DEFAULT_CONFIG)
             return DEFAULT_CONFIG.copy()
+        os.chmod(self.path, 0o600)
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -60,11 +85,15 @@ class ConfigManager:
         if data is not None:
             self.config = data
         self.ensure_dir()
-        with open(self.path, "w", encoding="utf-8") as f:
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), 0o600)
             json.dump(self.config, f, indent=2, ensure_ascii=False)
 
     def ensure_dir(self):
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        directory = os.path.dirname(os.path.abspath(self.path))
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
 
     @property
     def allowed_ips(self):
@@ -72,11 +101,12 @@ class ConfigManager:
 
     @allowed_ips.setter
     def allowed_ips(self, ips):
-        self.config["allowed_ips"] = list(set(ips))
+        validated = [validate_whitelist_entry(ip) for ip in ips]
+        self.config["allowed_ips"] = list(dict.fromkeys(validated))
         self.save_config()
 
     def add_ip(self, ip):
-        ip = ip.strip()
+        ip = validate_whitelist_entry(ip)
         if ip and ip not in self.config["allowed_ips"]:
             self.config["allowed_ips"].append(ip)
             self.save_config()

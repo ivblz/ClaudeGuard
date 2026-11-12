@@ -24,8 +24,32 @@ __pycache__/
 # macOS app bundles
 *.app/
 
-# Local tests and installer tooling
-/tests/
-/build.sh
-/packaging/
-/ClaudeGuard.pkg
+# Build outputs (keep build scripts, packaging resources and tests tracked)
+*.pkg
+*.dmg
+*.dSYM/
+/build/
+/dist/
+/bin/sing-box
+/bin/hosts-helper
+/bin/pf-anchor
+/bin/ClaudeGuardMenuBar
+/bin/PROXY-ENGINE-NOTICE.txt
+
+# Local runtime artifacts and diagnostic captures
+/dns_cache.json
+/proxy-health.json
+/proxy.json
+/proxy-next.json
+/proxy-fingerprint
+/network-status.json
+/trace.log
+*.pcap
+*.pcapng
+.pytest_cache/
+.venv/
+venv/
+
+# Generated local proxy test profiles and machine-specific paths
+/tests/local-proxy-lab/profiles/
+/tests/local-proxy-lab/manifest.json
