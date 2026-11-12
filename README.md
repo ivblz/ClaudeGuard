@@ -97,7 +97,7 @@ Use `claudeguard set-proxy` interactively, paste the profile and finish input wi
 
 ## Network protection and limits
 
-The user daemon publishes `allowed`, `blocked`, `offline` or `disabled` in `~/.config/claudeguard/state.json`. Launch checks use this verdict; VPN mode can fall back to its own IP check. Process shutdown follows periodic checks and is not instantaneous.
+The user daemon publishes `allowed`, `blocked`, `offline` or `disabled` in `~/.config/claudeguard/state.json`. Launch checks use this verdict; VPN mode can fall back to its own IP check. ClaudeGuard reacts to macOS network events and also checks the connection every 3 seconds. Processes are terminated after a `blocked` verdict is confirmed; termination is not instantaneous. Already running processes are not terminated solely because the state becomes `offline`.
 
 The root helper manages a private `com.claudeguard` PF anchor and its own PF enable token. It does not globally disable PF or flush every connection. Changes remove connection states for protected destinations. VPN allow rules bind states to the verified `utun` interface. DNS queries for A/AAAA run concurrently with fallback resolvers and a 2.5-second overall deadline; there is no warm DNS cache.
 
