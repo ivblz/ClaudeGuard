@@ -1,0 +1,23 @@
+ClaudeGuard
+Copyright (c) 2026 ivblz
+
+ClaudeGuard is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+ClaudeGuard is distributed WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See LICENSE for the complete GNU General Public License version 3.
+
+Third-party components retain their own copyright notices and license terms:
+
+sing-box v1.14.4 (SagerNet / nekohasekai)
+License and additional naming condition: src/vendor/SING_BOX_LICENSE
+Source: https://github.com/SagerNet/sing-box/tree/v1.14.4
+Source archive: https://github.com/SagerNet/sing-box/archive/refs/tags/v1.14.4.tar.gz
+Upstream license: https://github.com/SagerNet/sing-box/blob/v1.14.4/LICENSE
+ClaudeGuard applies a local macOS code signature to the engine. The PKG combines
+the upstream arm64 and amd64 binaries into a universal executable.
+ClaudeGuard is an independent project and is not affiliated with SagerNet.
+
+Apple PF ABI definitions: src/vendor/pf_abi.h
+Apple Public Source License: src/vendor/APPLE_LICENSE

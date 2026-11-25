@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Local secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+.ssh/
+
+# Local runtime state (may contain VPN IPs and machine-specific paths)
+/config.json
+/state.json
+/pending/
+*.log
+
+# macOS app bundles
+*.app/
+
+# Build outputs (keep build scripts, packaging resources and tests tracked)
+*.pkg
+*.dmg
+*.dSYM/
+/build/
+/dist/
+/bin/sing-box
+/bin/hosts-helper
+/bin/pf-anchor
+/bin/ClaudeGuardMenuBar
+/bin/PROXY-ENGINE-NOTICE.txt
+
+# Local runtime artifacts and diagnostic captures
+/dns_cache.json
+/proxy-health.json
+/proxy.json
+/proxy-next.json
+/proxy-fingerprint
+/network-status.json
+/trace.log
+*.pcap
+*.pcapng
+.pytest_cache/
+.venv/
+venv/
+
+# Generated local proxy test profiles and machine-specific paths
+/tests/local-proxy-lab/profiles/
+/tests/local-proxy-lab/manifest.json
+
+# Private local lab files and secret-scan reports
+/tests/local-proxy-lab/
+**/config.json
+**/state.json
+**/pending/
+**/proxy.json
+**/proxy-next.json
+**/dns_cache.json
+**/manifest.json
+gitleaks*.json
+*secrets-report*.json
