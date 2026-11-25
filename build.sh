@@ -2,8 +2,6 @@
 # Build release assets without installing or changing the running firewall.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${1:-2.0.0}"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Usage: ./build.sh [2.0.0]' >&2; exit 1; }
 [ "$(uname -s)" = Darwin ] || { echo 'Build ClaudeGuard on macOS.' >&2; exit 1; }
 for tool in xcrun pkgbuild productbuild codesign iconutil sips; do
     command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
@@ -36,7 +34,7 @@ cp "$WORK/engine-arm64/PROXY-ENGINE-NOTICE.txt" "$HELPER/"
 xcrun lipo -create "$WORK/engine-arm64/sing-box" "$WORK/engine-x86_64/sing-box" -output "$HELPER/sing-box"
 cp "$ROOT/src/proxy_config.py" "$ROOT/src/proxy_service.py" "$ROOT/src/trace_timing.py" "$HELPER/"
 cp "$WORK/hosts-helper" "$WORK/pf-anchor" "$ROOT/src/pf_controller.py" "$HELPER/"
-/usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' "$ROOT/src/" "$HELPER/Runtime/src/"
+/usr/bin/rsync -a --exclude '/windows/' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' "$ROOT/src/" "$HELPER/Runtime/src/"
 cp "$ROOT/bin/claudeguard" "$HELPER/Runtime/bin/"
 cp "$ROOT/uninstall.sh" "$ROOT/packaging/setup_user.py" "$HELPER/Runtime/"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$HELPER/"
@@ -50,18 +48,18 @@ for pair in '16:icon_16x16' '32:icon_16x16@2x' '32:icon_32x32' '64:icon_32x32@2x
         --out "$WORK/AppIcon.iconset/${pair#*:}.png" >/dev/null
 done
 iconutil -c icns "$WORK/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
-/usr/bin/python3 - "$APP" "$VERSION" "$WORK/components.plist" <<'PY'
+/usr/bin/python3 - "$APP" "$WORK/components.plist" <<'PY'
 import plistlib, sys
 from pathlib import Path
-app, version, components = sys.argv[1:]
+app, components = sys.argv[1:]
 with (Path(app) / 'Contents/Info.plist').open('wb') as f:
     plistlib.dump(dict(CFBundleExecutable='ClaudeGuardMenuBar', CFBundleIconFile='AppIcon',
         CFBundleIdentifier='com.claudeguard.app', CFBundleName='ClaudeGuard',
-        CFBundlePackageType='APPL', CFBundleShortVersionString=version,
-        CFBundleVersion=version, LSMinimumSystemVersion='14.0', LSUIElement=True), f)
+        CFBundlePackageType='APPL',
+        CFBundleVersion="1", LSMinimumSystemVersion='14.0', LSUIElement=True), f)
 with open(components, 'wb') as f:
     plistlib.dump([dict(RootRelativeBundlePath='Applications/ClaudeGuard.app',
-        BundleIsRelocatable=False, BundleIsVersionChecked=True,
+        BundleIsRelocatable=False, BundleIsVersionChecked=False,
         BundleHasStrictIdentifier=True, BundleOverwriteAction='upgrade')], f)
 PY
 find "$PAYLOAD" -type d -exec chmod 755 {} +
@@ -80,11 +78,11 @@ done
 chmod 755 "$WORK/scripts/preinstall" "$WORK/scripts/postinstall"
 pkgbuild --root "$PAYLOAD" --component-plist "$WORK/components.plist" \
     --scripts "$WORK/scripts" --identifier com.claudeguard.installer \
-    --version "$VERSION" --install-location / --ownership recommended "$WORK/component.pkg"
+    --install-location / --ownership recommended "$WORK/component.pkg"
 cat > "$WORK/Distribution.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-  <title>ClaudeGuard $VERSION</title>
+  <title>ClaudeGuard</title>
   <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64"/>
   <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
   <allowed-os-versions><os-version min="14.0"/></allowed-os-versions>
@@ -92,10 +90,11 @@ cat > "$WORK/Distribution.xml" <<EOF
   <conclusion file="Conclusion.html" mime-type="text/html"/>
   <choices-outline><line choice="default"/></choices-outline>
   <choice id="default" visible="false"><pkg-ref id="com.claudeguard.installer"/></choice>
-  <pkg-ref id="com.claudeguard.installer" version="$VERSION" onConclusion="none">component.pkg</pkg-ref>
+  <pkg-ref id="com.claudeguard.installer" onConclusion="none">component.pkg</pkg-ref>
 </installer-gui-script>
 EOF
-OUTPUT="$ROOT/ClaudeGuard.pkg"
+mkdir -p "$ROOT/dist"
+OUTPUT="$ROOT/dist/ClaudeGuard.pkg"
 set -- productbuild --distribution "$WORK/Distribution.xml" --resources "$ROOT/packaging/resources" \
     --package-path "$WORK"
 if [ -n "${CLAUDEGUARD_INSTALLER_SIGN_IDENTITY:-}" ]; then

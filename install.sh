@@ -117,7 +117,7 @@ info "Installing to ${BOLD}$INSTALL_DIR${RST}"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/src"
 cp "$SOURCE_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
 cp "$SOURCE_DIR/LICENSE" "$SOURCE_DIR/NOTICE" "$INSTALL_DIR/"
-/usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' \
+/usr/bin/rsync -a --exclude '/windows/' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' \
     "$SOURCE_DIR/src/" "$INSTALL_DIR/src/"
 for f in "$SOURCE_DIR/bin/"*; do
     [ "$(basename "$f")" = "hosts-helper" ] && continue   # compiled below, never shipped
@@ -174,8 +174,7 @@ cat > "$BUILD_APP_BUNDLE/Contents/Info.plist" <<'EOF'
     <key>CFBundleIdentifier</key><string>com.claudeguard.app</string>
     <key>CFBundleName</key><string>ClaudeGuard</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>2.0.0</string>
-    <key>CFBundleVersion</key><string>2.0.0</string>
+    <key>CFBundleVersion</key><string>1</string>
     <key>LSUIElement</key><true/>
 </dict>
 </plist>

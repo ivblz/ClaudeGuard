@@ -1,0 +1,66 @@
+name: Test and build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Run macOS and shared tests
+        shell: bash
+        run: |
+          modules=()
+          for file in tests/test_*.py; do
+            [[ "$file" == tests/test_windows_* ]] && continue
+            name=${file##*/}
+            modules+=("${name%.py}")
+          done
+          PYTHONPATH=tests python -m unittest "${modules[@]}"
+      - name: Build and inspect macOS installer
+        run: |
+          ./build.sh
+          pkgutil --expand-full dist/ClaudeGuard.pkg "$RUNNER_TEMP/claudeguard-pkg"
+          runtime=$(find "$RUNNER_TEMP/claudeguard-pkg" -type d -path '*/ClaudeGuard/Runtime/src')
+          test -f "$runtime/main.swift"
+          test ! -e "$runtime/windows"
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          architecture: x64
+      - run: python -m pip install -r requirements-windows.txt
+      - run: python -m unittest discover -s tests -p 'test_windows*.py'
+      - name: Build Windows installer and ZIP
+        shell: powershell
+        run: .\build-windows.ps1
+      - name: Test packaged engine on loopback
+        shell: powershell
+        run: |
+          $archive = Get-Item -LiteralPath "dist/ClaudeGuard.zip"
+          $testRoot = Join-Path $env:RUNNER_TEMP 'claudeguard-engine-test'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $testRoot
+          $env:CLAUDEGUARD_TEST_ENGINE = Join-Path $testRoot 'ClaudeGuard\sing-box.exe'
+          python -m unittest discover -s tests -p 'test_windows_engine.py'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ClaudeGuard-windows-x64
+          path: |
+            dist/ClaudeGuard.exe
+            dist/ClaudeGuard.exe.sha256
+            dist/ClaudeGuard.zip
+            dist/ClaudeGuard.zip.sha256
+          if-no-files-found: error

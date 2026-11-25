@@ -2,20 +2,26 @@
 
 # 🛡️ ClaudeGuard
 
-**VPN whitelist and proxy routing for Claude on macOS.**
+**VPN whitelist and proxy routing for Claude on macOS and Windows.**
 
 Protect Claude Code CLI, Claude Desktop and known Claude/Anthropic destinations using a verified VPN IP or your own proxy.
 
 **English** · [Русский](README.ru.md)
 
-<img src="photos/vpn_ok.png" width="290" alt="VPN mode">
-<img src="photos/proxy_ok.png" width="290" alt="Proxy mode">
+<img src="assets/screenshots/vpn_ok.png" width="290" alt="VPN mode">
+<img src="assets/screenshots/proxy_ok.png" width="290" alt="Proxy mode">
 
 IP addresses and proxy endpoints in these screenshots are redacted.
 
 </div>
 
-## Features
+## Windows
+
+The **Windows 10/11 x64** preview runs in the notification area. Run the Windows installer EXE, or extract the entire release ZIP and run `Install.cmd`. Approve setup and click the shield in the notification area to open the menu. Both packages include Python and sing-box. To build them locally, run `.\build-windows.ps1` on Windows. [Releases](https://github.com/ivblz/ClaudeGuard/releases)
+
+Use the tray to configure a VPN whitelist or a proxy profile. Windows uses Defender Firewall for known Claude and Anthropic destinations. In Proxy mode, launch Claude Desktop or Claude Code through the tray, or configure a browser to use the local proxy. [Windows setup, limits, startup, cleanup and source builds](packaging/windows/README.md)
+
+## macOS features
 
 - **VPN mode:** an IPv4/IPv6 address or CIDR whitelist; the network guard verifies the VPN route and IPv4 exit before allowing protected destinations through that tunnel. IPv6 has no separate VPN verification and stays blocked for protected destinations.
 - **Proxy mode:** HTTP/HTTPS, SOCKS4/4a/5, Shadowsocks, VMess, VLESS/Reality, Trojan, Hysteria2 and TUIC through sing-box. Advanced protocols and transports use an outbound JSON profile.
@@ -58,11 +64,9 @@ The source installer compiles Swift/C for the current Mac and downloads the SHA-
 
 ```bash
 ./build.sh
-# Optional version override:
-./build.sh 2.0.1
 ```
 
-Output: `ClaudeGuard.pkg` in the project root. The default package version is **2.0.0**. Each build downloads both pinned engine architectures, combines them and includes the engine, licenses and installer scripts in the package. Building does not install the app or change the firewall. See [packaging details](packaging/README.md) for signing and compatibility limits.
+Both builders place release files in `dist/`. The macOS package is `dist/ClaudeGuard.pkg`. Each build downloads both pinned engine architectures, combines them and includes the engine, licenses and installer scripts in the package. Building does not install the app or change the firewall. See [packaging details](packaging/README.md) for signing and compatibility limits.
 
 ### Uninstall
 

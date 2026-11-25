@@ -6,7 +6,7 @@ Build without installing the app or changing the system firewall:
 ./build.sh
 ```
 
-The result is `ClaudeGuard.pkg` in the project root. It is excluded from Git through `.gitignore` and can be attached to a GitHub Release. To set a different version, run `./build.sh 1.2.3`: the filename stays the same, while the version inside the package changes. The default version is `2.0.0`.
+The result is `dist/ClaudeGuard.pkg`. It is excluded from Git through `.gitignore` and can be attached to a GitHub Release.
 
 You can run the builder from any directory. It does not install anything. If the build fails, the previous `ClaudeGuard.pkg` remains in place. Temporary files are removed automatically.
 
@@ -33,14 +33,14 @@ To create a signed build, specify certificates from your keychain:
 ```bash
 CLAUDEGUARD_APP_SIGN_IDENTITY='Developer ID Application: NAME (TEAMID)' \
 CLAUDEGUARD_INSTALLER_SIGN_IDENTITY='Developer ID Installer: NAME (TEAMID)' \
-./build.sh 2.0.0
+./build.sh
 ```
 
 Then submit the package for notarization and staple the ticket separately:
 
 ```bash
-xcrun notarytool submit ClaudeGuard.pkg --keychain-profile PROFILE --wait
-xcrun stapler staple ClaudeGuard.pkg
+xcrun notarytool submit dist/ClaudeGuard.pkg --keychain-profile PROFILE --wait
+xcrun stapler staple dist/ClaudeGuard.pkg
 ```
 
 This requires your own Developer ID certificates and a configured notarization profile. The builder does not create them or publish anything to GitHub.

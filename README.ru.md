@@ -2,20 +2,26 @@
 
 # 🛡️ ClaudeGuard
 
-**VPN-whitelist и проксирование Claude на macOS.**
+**VPN-whitelist и проксирование Claude на macOS и Windows.**
 
 Защита Claude Code CLI, Claude Desktop и известных адресов Claude/Anthropic через проверенный VPN или собственный прокси.
 
 [English](README.md) · **Русский**
 
-<img src="photos/vpn_ok.png" width="290" alt="Режим VPN">
-<img src="photos/proxy_ok.png" width="290" alt="Режим Proxy">
+<img src="assets/screenshots/vpn_ok.png" width="290" alt="Режим VPN">
+<img src="assets/screenshots/proxy_ok.png" width="290" alt="Режим Proxy">
 
 IP и адрес прокси на скриншотах скрыты.
 
 </div>
 
-## Возможности
+## Windows
+
+Предварительная версия ClaudeGuard для **Windows 10/11 x64** работает в области уведомлений. Запустите установщик EXE или распакуйте весь ZIP и запустите `Install.cmd`. Подтвердите установку и нажмите на щит в области уведомлений, чтобы открыть меню. Оба пакета включают Python и sing-box. Чтобы собрать их самостоятельно, выполните `.\build-windows.ps1` в Windows. [Релизы](https://github.com/ivblz/ClaudeGuard/releases)
+
+В меню щита можно настроить список разрешённых IP для VPN или профиль прокси. Для известных адресов Claude и Anthropic используются правила брандмауэра Windows. В режиме Proxy запускайте Claude Desktop или Claude Code из меню щита либо настройте браузер на локальный прокси. [Руководство по настройке, ограничениям, автозапуску, удалению и сборке](packaging/windows/README.md)
+
+## Возможности в macOS
 
 - **VPN:** whitelist адресов IPv4/IPv6 и диапазонов CIDR. Перед разрешением защищаемого трафика проверяются маршрут VPN и внешний IPv4. Отдельной проверки VPN для IPv6 пока нет: защищаемые IPv6-адреса остаются заблокированы.
 - **Proxy:** HTTP/HTTPS, SOCKS4/4a/5, Shadowsocks, VMess, VLESS/Reality, Trojan, Hysteria2 и TUIC через sing-box. Для сложных протоколов и транспортов используется outbound JSON.
@@ -58,11 +64,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/ivblz/ClaudeGuard/main/i
 
 ```bash
 ./build.sh
-# Другая версия пакета:
-./build.sh 2.0.1
 ```
 
-Результат — `ClaudeGuard.pkg` в корне проекта. Версия по умолчанию — **2.0.0**. Каждая сборка скачивает обе закреплённые архитектуры движка, объединяет их и включает в пакет вместе с лицензиями и установочными скриптами. Сборка не устанавливает приложение и не меняет firewall. Подробнее о подписи и совместимости: [packaging/README.md](packaging/README.md).
+Готовые сборки обеих платформ находятся в `dist/`. Пакет для macOS — `dist/ClaudeGuard.pkg`. Каждая сборка скачивает обе закреплённые архитектуры движка, объединяет их и включает в пакет вместе с лицензиями и установочными скриптами. Сборка не устанавливает приложение и не меняет firewall. Подробнее о подписи и совместимости: [packaging/README.md](packaging/README.md).
 
 ### Удаление
 
