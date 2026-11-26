@@ -90,7 +90,7 @@ cat > "$WORK/Distribution.xml" <<EOF
   <conclusion file="Conclusion.html" mime-type="text/html"/>
   <choices-outline><line choice="default"/></choices-outline>
   <choice id="default" visible="false"><pkg-ref id="com.claudeguard.installer"/></choice>
-  <pkg-ref id="com.claudeguard.installer" onConclusion="none">component.pkg</pkg-ref>
+  <pkg-ref id="com.claudeguard.installer" onConclusion="none">#component.pkg</pkg-ref>
 </installer-gui-script>
 EOF
 mkdir -p "$ROOT/dist"

@@ -103,11 +103,6 @@ function Invoke-ApplicationMaintenance {
 }
 
 function Install-ClaudeGuard {
-    $sourceApp = Join-Path $PSScriptRoot 'ClaudeGuard.exe'
-    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($sourceApp)
-    if ($version.FileDescription -ne 'ClaudeGuard') {
-        throw 'Extract the entire ClaudeGuard ZIP before running Install.cmd.'
-    }
     $payload = @('_internal', 'licenses', 'ClaudeGuard.exe', 'sing-box.exe', 'libcronet.dll',
         'LICENSE', 'NOTICE', 'README.md', 'Setup.ps1', 'Uninstall.cmd')
     foreach ($name in $payload) {
