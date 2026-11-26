@@ -17,7 +17,7 @@ IP addresses and proxy endpoints in these screenshots are redacted.
 
 ## Windows
 
-The **Windows 10/11 x64** preview runs in the notification area. Run the Windows installer EXE, or extract the entire release ZIP and run `Install.cmd`. Approve setup and click the shield in the notification area to open the menu. Both packages include Python and sing-box. To build them locally, run `.\build-windows.ps1` on Windows. [Releases](https://github.com/ivblz/ClaudeGuard/releases)
+The **Windows 10/11 x64** preview runs in the notification area. Download `ClaudeGuard.exe` from the release and run it. Approve setup and click the shield in the notification area to open the menu. The installer includes Python and sing-box. To build it locally, run `.\build-windows.ps1` on Windows. [Releases](https://github.com/ivblz/ClaudeGuard/releases)
 
 Use the tray to configure a VPN whitelist or a proxy profile. Windows uses Defender Firewall for known Claude and Anthropic destinations. In Proxy mode, launch Claude Desktop or Claude Code through the tray, or configure a browser to use the local proxy. [Windows setup, limits, startup, cleanup and source builds](packaging/windows/README.md)
 
