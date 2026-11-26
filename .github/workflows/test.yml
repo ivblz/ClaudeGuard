@@ -33,6 +33,16 @@ jobs:
           runtime=$(find "$RUNNER_TEMP/claudeguard-pkg" -type d -path '*/ClaudeGuard/Runtime/src')
           test -f "$runtime/main.swift"
           test ! -e "$runtime/windows"
+      - name: Checksum macOS installer
+        working-directory: dist
+        run: shasum -a 256 ClaudeGuard.pkg > ClaudeGuard.pkg.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ClaudeGuard-macos-pkg
+          path: |
+            dist/ClaudeGuard.pkg
+            dist/ClaudeGuard.pkg.sha256
+          if-no-files-found: error
 
   windows:
     runs-on: windows-latest
